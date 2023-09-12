@@ -52,6 +52,7 @@ borealis_files = files(
     'lib/views/debug_layer.cpp',
     'lib/views/bottom_bar.cpp',
     'lib/views/dialog.cpp',
+    'lib/views/h_scrolling_frame.cpp',
 
     'lib/views/cells/cell_bool.cpp',
     'lib/views/cells/cell_detail.cpp',
@@ -61,6 +62,7 @@ borealis_files = files(
 
     'lib/views/widgets/battery.cpp',
     'lib/views/widgets/wireless.cpp',
+    'lib/views/widgets/account.cpp',
 
     'lib/extern/glad/glad.c',
     'lib/extern/nanovg-gl/nanovg.c',

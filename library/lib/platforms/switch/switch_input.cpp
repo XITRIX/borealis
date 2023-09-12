@@ -118,7 +118,7 @@ SwitchInputManager::SwitchInputManager()
     m_hid_keyboard_state.assign(256, false);
 }
 
-SwitchInputManager::~SwitchInputManager() 
+SwitchInputManager::~SwitchInputManager()
 {
     NVGcontext* vg = Application::getNVGContext();
 
@@ -126,7 +126,7 @@ SwitchInputManager::~SwitchInputManager()
         nvgDeleteImage(vg, this->cursorTexture);
 }
 
-void SwitchInputManager::reinitVibration(int controller) 
+void SwitchInputManager::reinitVibration(int controller)
 {
     Logger::debug("Vibration reinit #{}", controller);
     hidInitializeVibrationDevices(m_vibration_device_handles[controller], 2, (HidNpadIdType)controller, HidNpadStyleTag_NpadJoyDual);
@@ -153,7 +153,7 @@ void SwitchInputManager::updateUnifiedControllerState(ControllerState* state)
             if (state->axes[i] < -1) state->axes[i] = -1;
             else if (state->axes[i] > 1) state->axes[i] = 1;
         }
-    } 
+    }
 }
 
 short SwitchInputManager::getControllersConnectedCount()
@@ -264,7 +264,7 @@ void SwitchInputManager::sendRumbleInternal(HidVibrationDeviceHandle vibration_d
     float low  = (float)lowFreqMotor / 0xFFFF;
     float high = (float)highFreqMotor / 0xFFFF;
 
-    memset(vibration_values, 0, sizeof(vibration_values));
+    memset(vibration_values, 0, sizeof(HidVibrationValue) * 2);
 
     vibration_values[0].amp_low   = low;
     vibration_values[0].freq_low  = low * 50;
@@ -314,7 +314,7 @@ void SwitchInputManager::runloopStart()
     handleKeyboard();
 }
 
-void SwitchInputManager::upToDateMouseState() 
+void SwitchInputManager::upToDateMouseState()
 {
     hidGetMouseStates(&currentMouseState, 1);
 }
@@ -330,11 +330,11 @@ void SwitchInputManager::handleMouse()
 void SwitchInputManager::handleKeyboard()
 {
     HidKeyboardState state;
-    
+
     if (hidGetKeyboardStates(&state, 1)) {
         for (int i = 0; i < 256; ++i) {
             auto is_pressed = (state.keys[i / 64] & (1ul << (i % 64))) != 0;
-            if (m_hid_keyboard_state[i] != is_pressed) 
+            if (m_hid_keyboard_state[i] != is_pressed)
             {
                 m_hid_keyboard_state[i] = is_pressed;
                 BrlsKeyboardScancode glfwKey = switchKeyToGlfwKey(i);
@@ -342,19 +342,19 @@ void SwitchInputManager::handleKeyboard()
                 KeyState keyState;
                 keyState.key = glfwKey;
                 keyState.pressed = is_pressed;
-                
+
                 if (state.modifiers & HidKeyboardModifier_LeftAlt)
                     keyState.mods |= BRLS_KBD_MODIFIER_ALT;
-                
+
                 if (state.modifiers & HidKeyboardModifier_Control)
                     keyState.mods |= BRLS_KBD_MODIFIER_CTRL;
-                
+
                 if (state.modifiers & HidKeyboardModifier_Shift)
                     keyState.mods |= BRLS_KBD_MODIFIER_SHIFT;
-                
+
                 if (state.modifiers & HidKeyboardModifier_Gui)
                     keyState.mods |= BRLS_KBD_MODIFIER_META;
-                
+
                 getKeyboardKeyStateChanged()->fire(keyState);
             }
         }
@@ -382,9 +382,9 @@ void SwitchInputManager::drawCoursor(NVGcontext* vg)
     }
 }
 
-void SwitchInputManager::initCursor(NVGcontext* vg) 
+void SwitchInputManager::initCursor(NVGcontext* vg)
 {
-    if (cursorInited) return; 
+    if (cursorInited) return;
     if (vg) {
         this->pointerIcon = std::string(BRLS_RESOURCES) + "img/sys/cursor.png";
         this->cursorTexture = nvgCreateImage(vg, pointerIcon.c_str(), NVG_IMAGE_NEAREST);
@@ -411,7 +411,7 @@ BrlsKeyboardScancode SwitchInputManager::switchKeyToGlfwKey(int key)
     } else if (KBD_KP1 <= key && key <= KBD_KP9) {
         return (BrlsKeyboardScancode)(key - KBD_KP1 + BRLS_KBD_KEY_KP_1);
     }
-    
+
     switch (key) {
         case KBD_0: return BRLS_KBD_KEY_0;
         case KBD_SPACE: return BRLS_KBD_KEY_SPACE;
@@ -443,7 +443,7 @@ BrlsKeyboardScancode SwitchInputManager::switchKeyToGlfwKey(int key)
         case KBD_RIGHT: return BRLS_KBD_KEY_RIGHT;
         case KBD_UP: return BRLS_KBD_KEY_UP;
         case KBD_DOWN: return BRLS_KBD_KEY_DOWN;
-        
+
         case KBD_SYSRQ: return BRLS_KBD_KEY_PRINT_SCREEN;
         case KBD_SCROLLLOCK: return BRLS_KBD_KEY_SCROLL_LOCK;
         case KBD_PAUSE: return BRLS_KBD_KEY_PAUSE;

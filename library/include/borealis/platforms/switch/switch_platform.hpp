@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <borealis/platforms/glfw/glfw_platform.hpp>
+#include <borealis/core/platform.hpp>
 #include <borealis/platforms/switch/switch_audio.hpp>
 #include <borealis/platforms/switch/switch_font.hpp>
 #include <borealis/platforms/switch/switch_input.hpp>
