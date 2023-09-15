@@ -222,7 +222,7 @@ bool Application::mainLoop()
     }
 
     std::vector<TouchState> touchState;
-    for (int i = 0; i < rawTouch.size(); i++)
+    for (size_t i = 0; i < rawTouch.size(); i++)
     {
         auto old = std::find_if(std::begin(currentTouchState), std::end(currentTouchState), [rawTouch, i](TouchState touch) {
             return touch.fingerId == rawTouch[i].fingerId;
@@ -240,7 +240,7 @@ bool Application::mainLoop()
         }
     }
 
-    for (int i = 0; i < currentTouchState.size(); i++)
+    for (size_t i = 0; i < currentTouchState.size(); i++)
     {
         if (currentTouchState[i].phase == TouchPhase::NONE)
             continue;
@@ -255,7 +255,7 @@ bool Application::mainLoop()
         }
     }
 
-    for (int i = 0; i < touchState.size(); i++)
+    for (size_t i = 0; i < touchState.size(); i++)
     {
         if (touchState[i].phase == TouchPhase::NONE)
         {
@@ -848,7 +848,7 @@ void Application::pushActivity(Activity* activity, TransitionAnimation animation
 
     activity->resizeToFitWindow();
 
-    activity->hide([] {}, false, NULL);
+    activity->hide([] {}, false, 0.0f);
     if (!fadeOut)
         activity->show([] { Application::unblockInputs(); }, true, activity->getShowAnimationDuration(animation));
 
@@ -907,7 +907,7 @@ void Application::tryDeinitFirstResponder(View* view)
         return;
 
     // Interrupt current gestures if presented
-    for (int i = 0; i < currentTouchState.size(); i++)
+    for (size_t i = 0; i < currentTouchState.size(); i++)
     {
         if (currentTouchState[i].view == view)
         {

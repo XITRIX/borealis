@@ -306,7 +306,7 @@ RecyclerCell* RecyclerFrame::dequeueReusableCell(std::string identifier)
 // TODO: Implement it normally
 void RecyclerFrame::selectRowAt(IndexPath indexPath, bool animated)
 {
-    int count    = 0;
+    size_t count    = 0;
     float offset = 0;
 
     for (int j = 0; j < indexPath.section; j++)
@@ -470,10 +470,10 @@ void RecyclerFrame::addCellAt(int index, int downSide)
     this->contentBox->invalidate();
     cell->View::willAppear();
 
-    if (index < visibleMin)
+    if (index < (int)visibleMin)
         visibleMin = index;
 
-    if (index > visibleMax)
+    if (index > (int)visibleMax)
         visibleMax = index;
 
     Rect cellFrame = cell->getFrame();

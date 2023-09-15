@@ -93,6 +93,7 @@ SidebarItem::SidebarItem()
                 *soundToPlay = SOUND_CLICK_SIDEBAR;
                 Application::giveFocus(this);
                 break;
+            default: ;
         }
     }));
 }

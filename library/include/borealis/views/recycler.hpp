@@ -113,6 +113,8 @@ class RecyclerFrame;
 class RecyclerDataSource
 {
   public:
+    virtual ~RecyclerDataSource() = default;
+
     /*
      * Asks the data source to return the number of sections in the recycler frame.
      */
@@ -235,7 +237,7 @@ class RecyclerFrame : public ScrollingFrame
     RecyclerDataSource* dataSource = nullptr;
     bool layouted                  = false;
 
-    uint32_t visibleMin, visibleMax;
+    size_t visibleMin, visibleMax;
 
     IndexPath defaultCellFocus;
 

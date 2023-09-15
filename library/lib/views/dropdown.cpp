@@ -102,10 +102,10 @@ float min(float a, float b)
 }
 
 Dropdown::Dropdown(std::string title, std::vector<std::string> values, ValueSelectedEvent::Callback cb, int selected, ValueSelectedEvent::Callback dismissCb)
-    : values(values)
-    , cb(cb)
-    , selected(selected)
+    : cb(cb)
     , dismissCb(dismissCb)
+    , values(values)
+    , selected(selected)
 {
     this->inflateFromXMLString(dropdownFrameXML);
     this->title->setText(title);
