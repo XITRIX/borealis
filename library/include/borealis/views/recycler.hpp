@@ -154,6 +154,11 @@ class RecyclerDataSource
      * Tells the data source a row is selected.
      */
     virtual void didSelectRowAt(RecyclerFrame* recycler, IndexPath index) { }
+
+    /*
+     * Required for proper class inheritance.
+     */
+    virtual ~RecyclerDataSource() = default;
 };
 
 class RecyclerContentBox : public Box
