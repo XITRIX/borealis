@@ -469,12 +469,12 @@ void SwitchInputManager::handleControllerSensors()
         hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[1], &sixaxis, 1);
     else if (style_set & HidNpadStyleTag_NpadJoyDual)
     {
-        // For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
+        // For JoyDual, read from either the Right or Left Joy-Con depending on which is/are connected
         u64 attrib = padGetAttributes(&padsState[0]);
-        if (attrib & HidNpadAttribute_IsLeftConnected)
-            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[2], &sixaxis, 1);
-        else if (attrib & HidNpadAttribute_IsRightConnected)
+        if (attrib & HidNpadAttribute_IsRightConnected)
             hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[3], &sixaxis, 1);
+        else if (attrib & HidNpadAttribute_IsLeftConnected)
+            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[2], &sixaxis, 1);
     }
 
     auto accelState = SensorEvent{
