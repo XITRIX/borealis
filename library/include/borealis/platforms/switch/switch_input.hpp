@@ -106,6 +106,7 @@ class SwitchInputManager : public InputManager
     bool pointerLocked = false;
     HidMouseState currentMouseState;
     HidSixAxisSensorHandle m_six_axis_sensor_handle[4]; // All for player 1, player 2 not supported
+    bool m_console_imu_initialized = false;
 
     std::vector<bool> m_hid_keyboard_state;
     std::unordered_map<int, BrlsKeyboardScancode> m_hid_brls_map;
@@ -122,7 +123,7 @@ class SwitchInputManager : public InputManager
         unsigned short lowFreqMotor, unsigned short highFreqMotor);
     void sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2],
         unsigned short lowFreqMotor, unsigned short highFreqMotor, unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor);
-    void sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor, 
+    void sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor,
         unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor);
 
 };

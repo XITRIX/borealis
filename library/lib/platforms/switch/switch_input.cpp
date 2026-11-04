@@ -138,6 +138,19 @@ SwitchInputManager::SwitchInputManager()
     hidStartSixAxisSensor(this->m_six_axis_sensor_handle[1]);
     hidStartSixAxisSensor(this->m_six_axis_sensor_handle[2]);
     hidStartSixAxisSensor(this->m_six_axis_sensor_handle[3]);
+
+    // Initialize the Switch console's built-in IMU
+    if (R_SUCCEEDED(hidInitializeSevenSixAxisSensor()))
+    {
+        if (R_SUCCEEDED(hidStartSevenSixAxisSensor()))
+        {
+            m_console_imu_initialized = true;
+        }
+        else
+        {
+            hidFinalizeSevenSixAxisSensor();
+        }
+    }
 }
 
 SwitchInputManager::~SwitchInputManager()
@@ -158,6 +171,13 @@ SwitchInputManager::~SwitchInputManager()
     hidStopSixAxisSensor(this->m_six_axis_sensor_handle[2]);
     hidStopSixAxisSensor(this->m_six_axis_sensor_handle[3]);
 
+    // Shut down the Switch console's built-in IMU
+    if (m_console_imu_initialized)
+    {
+        hidStopSevenSixAxisSensor();
+        hidFinalizeSevenSixAxisSensor();
+        m_console_imu_initialized = false;
+    }
 }
 
 void SwitchInputManager::clearVibration(int controller)
@@ -282,7 +302,7 @@ void SwitchInputManager::updateControllerStateInner(ControllerState* state, PadS
         auto swap = Application::isSwapHalfJoyconStickToDpad();
         auto x = (float)analog_stick_l.y / (float)0x7FFF * -1.0f + (float)analog_stick_r.y / (float)0x7FFF;
         auto y = (float)analog_stick_l.x / (float)0x7FFF * -1.0f + (float)analog_stick_r.x / (float)0x7FFF;
-           
+
         if (!swap) {
             state->axes[LEFT_X] = x;
             state->axes[LEFT_Y] = y;
@@ -326,12 +346,12 @@ void SwitchInputManager::updateTouchStates(std::vector<RawTouchState>* states)
 
 void SwitchInputManager::sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2], unsigned short lowFreqMotor, unsigned short highFreqMotor)
 {
-     vibration_values[0].amp_low = 
+     vibration_values[0].amp_low =
     vibration_values[0].amp_high = lowFreqMotor == 0 ? 0.0f : 320.0f;
-    vibration_values[1].amp_low = 
+    vibration_values[1].amp_low =
     vibration_values[1].amp_high = highFreqMotor == 0 ? 0.0f : 320.0f;
 
-    vibration_values[0].freq_low = 
+    vibration_values[0].freq_low =
     vibration_values[0].freq_high = lowFreqMotor == 0 ? 160.0f : (float) lowFreqMotor / 204;
 
     vibration_values[1].freq_low = highFreqMotor == 0 ? 160.0f : (float) highFreqMotor / 204;
@@ -462,40 +482,88 @@ void SwitchInputManager::handleControllerSensors()
 {
     HidSixAxisSensorState sixaxis = { 0 };
 
-    uint64_t style_set = padGetStyleSet(&padsState[0]);
-    if (padStateHandheld.active_handheld)
-        hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[0], &sixaxis, 1);
-    else if (style_set & HidNpadStyleTag_NpadFullKey)
-        hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[1], &sixaxis, 1);
-    else if (style_set & HidNpadStyleTag_NpadJoyDual)
+    float accelX = 0.0f;
+    float accelY = 0.0f;
+    float accelZ = 0.0f;
+
+    float gyroX = 0.0f;
+    float gyroY = 0.0f;
+    float gyroZ = 0.0f;
+
+    bool consoleImuUsed = false;
+
+    // Prefer the Switch console's built-in IMU in handheld mode
+    if (m_console_imu_initialized && padStateHandheld.active_handheld)
     {
-        // For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
-        u64 attrib = padGetAttributes(&padsState[0]);
-        if (attrib & HidNpadAttribute_IsLeftConnected)
-            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[2], &sixaxis, 1);
-        else if (attrib & HidNpadAttribute_IsRightConnected)
-            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[3], &sixaxis, 1);
+        HidSevenSixAxisSensorState consoleStates[1] = {};
+        size_t total = 0;
+
+        Result rc = hidGetSevenSixAxisSensorStates(consoleStates, 1, &total);
+
+    if (R_SUCCEEDED(rc) && total > 0)
+    {
+    // Read acceleration from the Switch console IMU
+    accelX = -consoleStates[0].unk_x18[0];
+    accelY = -consoleStates[0].unk_x18[2];
+    accelZ = consoleStates[0].unk_x18[1];
+
+    // Apply the tested built-in console IMU sensitivity
+    constexpr float CONSOLE_GYRO_SENSITIVITY = 1.8f;
+
+    gyroX = consoleStates[0].unk_x18[3] * CONSOLE_GYRO_SENSITIVITY;
+    gyroY = consoleStates[0].unk_x18[5] * CONSOLE_GYRO_SENSITIVITY;
+    gyroZ = -consoleStates[0].unk_x18[4] * CONSOLE_GYRO_SENSITIVITY;
+
+    consoleImuUsed = true;
+    }
+    }
+
+    // Fall back to the existing Npad/Joy-Con sensor if needed
+    if (!consoleImuUsed)
+    {
+        uint64_t style_set = padGetStyleSet(&padsState[0]);
+
+        if (padStateHandheld.active_handheld)
+            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[0], &sixaxis, 1);
+        else if (style_set & HidNpadStyleTag_NpadFullKey)
+            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[1], &sixaxis, 1);
+        else if (style_set & HidNpadStyleTag_NpadJoyDual)
+        {
+            // For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
+            u64 attrib = padGetAttributes(&padsState[0]);
+
+            if (attrib & HidNpadAttribute_IsLeftConnected)
+                hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[2], &sixaxis, 1);
+            else if (attrib & HidNpadAttribute_IsRightConnected)
+                hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[3], &sixaxis, 1);
+        }
+
+        accelX = -sixaxis.acceleration.x;
+        accelY = -sixaxis.acceleration.z;
+        accelZ = sixaxis.acceleration.y;
+
+        gyroX = static_cast<float>(sixaxis.angular_velocity.x * 2.0f * M_PI);
+        gyroY = static_cast<float>(sixaxis.angular_velocity.z * 2.0f * M_PI);
+        gyroZ = static_cast<float>(-sixaxis.angular_velocity.y * 2.0f * M_PI);
     }
 
     auto accelState = SensorEvent{
         0,
         SensorEventType::ACCEL,
-        { -sixaxis.acceleration.x,
-          -sixaxis.acceleration.z,
-          sixaxis.acceleration.y
-        },
+        { accelX, accelY, accelZ },
         0
     };
+
     auto gyroState = SensorEvent{
         0,
         SensorEventType::GYRO,
-        { static_cast<float>(sixaxis.angular_velocity.x * 2.0f * M_PI),
-          static_cast<float>(sixaxis.angular_velocity.z * 2.0f * M_PI),
-          static_cast<float>(-sixaxis.angular_velocity.y * 2.0f * M_PI)
-        },
-        0 };
+        { gyroX, gyroY, gyroZ },
+        0
+    };
+
     getControllerSensorStateChanged()->fire(accelState);
     getControllerSensorStateChanged()->fire(gyroState);
+
     Application::setActiveEvent(true);
 }
 
@@ -737,7 +805,7 @@ void SwitchInputManager::screenshot_button_thread_fn(std::stop_token token) {
             case 1: // Home button
                 if (this->m_homeButtonMode == ButtonOverrideMode::NONE)
                     break;
-            
+
                 eventClear(&home_evt);
 
                 if (!home_down_start_tick) {
