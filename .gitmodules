@@ -4,3 +4,4 @@
 [submodule "library/lib/extern/SDL3"]
 	path = library/lib/extern/SDL3
 	url = https://github.com/XITRIX/SDL.git
+	branch = moonlight

@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/SubiyaCryolite/nanovg_vulkan",
+  "revision": "0f7110feafa1f293580eb134e5ff7a9368021ac2",
+  "files": {
+    "src/nanovg_vk.c": "b77ba180d6ab3d4081c63d6fe27fe616ae60a99a3313497be7d4be2ca47d0b74",
+    "src/nanovg_vk.h": "22d29be6d51c79c5237911aaf2315aad985c5fc74c2f3d26753736dbb1f7bbbd",
+    "src/shader/fill.vert": "df86e501d06208bfa8881ab3f5c551f674c7d4aa380c16425c728d7b3768fd4f",
+    "src/shader/fill.frag": "47679280cb93cd50f72afbc076010829ea7fb9752f228fddf25a921ae3ac3ab6",
+    "src/shader/fill.vert.inc": "4b6bf1561befa594dac4ef9cc52fb5cef1db42f6703abae632fe74a5307c915a",
+    "src/shader/fill.frag.inc": "14c21cde50b2c371b5f00ccd9c17282b1305562cfa282a5a40e3f850f114244a",
+    "LICENSE.txt": "45185a6680ed83863bef33e1055f9fd76374df4b81c957802c19a286c982dfd2"
+  }
+}

@@ -18,7 +18,7 @@
 
 #ifdef BOREALIS_USE_DEKO3D
 #include <borealis/platforms/switch/switch_video.hpp>
-#elif defined(__SDL2__)
+#elif defined(__SDL2__) || defined(__SDL3__)
 #include <borealis/platforms/sdl/sdl_video.hpp>
 #else
 #include <borealis/platforms/glfw/glfw_video.hpp>
@@ -84,7 +84,7 @@ class SwitchPlatform : public Platform
 
 #ifdef BOREALIS_USE_DEKO3D
     SwitchVideoContext* videoContext;
-#elif defined(__SDL2__)
+#elif defined(__SDL2__) || defined(__SDL3__)
     SDLVideoContext* videoContext;
 #else
     GLFWVideoContext* videoContext;

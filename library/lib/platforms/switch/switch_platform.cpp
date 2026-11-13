@@ -116,7 +116,7 @@ void SwitchPlatform::createWindow(std::string windowTitle, uint32_t windowWidth,
 {
 #ifdef BOREALIS_USE_DEKO3D
     this->videoContext = new SwitchVideoContext();
-#elif defined(__SDL2__)
+#elif defined(__SDL2__) || defined(__SDL3__)
     this->videoContext = new SDLVideoContext(windowTitle, windowWidth, windowHeight, 0, 0);
 #else
     this->videoContext = new GLFWVideoContext(windowTitle, windowWidth, windowHeight);
@@ -247,11 +247,21 @@ void SwitchPlatform::openBrowser(std::string url)
 
 std::string SwitchPlatform::getName()
 {
+#ifdef __SWITCH2__
+    return "Switch 2";
+#else
     return "Switch";
+#endif
 }
 
 bool SwitchPlatform::mainLoopIteration()
 {
+#ifdef __SDL3__
+    SDL_Event event;
+    while (SDL_PollEvent(&event))
+        if (event.type == SDL_EVENT_QUIT)
+            Application::quit();
+#endif
     return appletMainLoop();
 }
 
