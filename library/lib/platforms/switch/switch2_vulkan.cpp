@@ -6,6 +6,7 @@
 #include <borealis.hpp>
 #include <borealis/platforms/sdl/sdl_video.hpp>
 #include <borealis/platforms/switch/switch2_vulkan.hpp>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -108,6 +109,15 @@ Switch2VulkanContext::Switch2VulkanContext()
     vkGetDeviceQueue(device, queueFamily, 0, &queue);
     VkPhysicalDeviceProperties properties { };
     vkGetPhysicalDeviceProperties(physical, &properties);
+    maxTexelElements    = properties.limits.maxTexelBufferElements;
+    texelBufferSampling = maxTexelElements > 0;
+    for (auto format : { VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM })
+    {
+        VkFormatProperties support { };
+        vkGetPhysicalDeviceFormatProperties(physical, format, &support);
+        texelBufferSampling &= (support.bufferFeatures & VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT) != 0;
+    }
+    brls::Logger::info("SWITCH2_VULKAN: texelBufferSampling={} maxTexelElements={}", texelBufferSampling, maxTexelElements);
     brls::Logger::info("SWITCH2_VULKAN: native driver={} externalHostMemory={} (UI and video; no GL/Zink)", properties.deviceName, externalHostMemory);
     VkCommandPoolCreateInfo pool { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     pool.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -168,11 +178,17 @@ Switch2VkBuffer Switch2VulkanContext::createBuffer(VkDeviceSize size, VkBufferUs
     check(vkAllocateMemory(device, &memory, nullptr, &result.memory), "allocate buffer");
     check(vkBindBufferMemory(device, result.buffer, result.memory, 0), "bind buffer");
     check(vkMapMemory(device, result.memory, 0, VK_WHOLE_SIZE, 0, &result.mapped), "map buffer");
+    if (usage & VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT)
+        createVideoViews(result);
     return result;
 }
 
 void Switch2VulkanContext::destroyBuffer(Switch2VkBuffer& buffer)
 {
+    if (buffer.luma)
+        vkDestroyBufferView(device, buffer.luma, nullptr);
+    if (buffer.chroma)
+        vkDestroyBufferView(device, buffer.chroma, nullptr);
     if (buffer.mapped)
         vkUnmapMemory(device, buffer.memory);
     if (buffer.buffer)
@@ -182,7 +198,7 @@ void Switch2VulkanContext::destroyBuffer(Switch2VkBuffer& buffer)
     buffer = { };
 }
 
-bool Switch2VulkanContext::importBuffer(void* address, VkDeviceSize size, Switch2VkBuffer& result)
+bool Switch2VulkanContext::importBuffer(void* address, VkDeviceSize size, Switch2VkBuffer& result, bool texelViews)
 {
     if (!externalHostMemory)
         return false;
@@ -202,7 +218,9 @@ bool Switch2VulkanContext::importBuffer(void* address, VkDeviceSize size, Switch
     info.pNext = &external;
     info.size  = size;
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    rc         = vkCreateBuffer(device, &info, nullptr, &result.buffer);
+    if (texelBufferSampling && texelViews)
+        info.usage |= VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
+    rc = vkCreateBuffer(device, &info, nullptr, &result.buffer);
     if (rc != VK_SUCCESS)
         return false;
     VkMemoryRequirements req { };
@@ -230,7 +248,82 @@ bool Switch2VulkanContext::importBuffer(void* address, VkDeviceSize size, Switch
         return false;
     }
     result.size = size;
+    if (texelViews)
+        createVideoViews(result);
     return true;
+}
+
+void Switch2VulkanContext::createVideoViews(Switch2VkBuffer& buffer)
+{
+    if (!texelBufferSampling || !buffer.size || buffer.size > maxTexelElements || (buffer.size & 1))
+        return;
+    VkBufferViewCreateInfo info { VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO };
+    info.buffer = buffer.buffer;
+    info.range  = buffer.size;
+    info.format = VK_FORMAT_R8_UNORM;
+    VkResult rc = vkCreateBufferView(device, &info, nullptr, &buffer.luma);
+    if (rc == VK_SUCCESS)
+    {
+        info.format = VK_FORMAT_R8G8_UNORM;
+        rc          = vkCreateBufferView(device, &info, nullptr, &buffer.chroma);
+    }
+    if (rc != VK_SUCCESS)
+    {
+        if (buffer.luma)
+            vkDestroyBufferView(device, buffer.luma, nullptr);
+        buffer.luma = buffer.chroma = VK_NULL_HANDLE;
+        brls::Logger::warning("SWITCH2_VULKAN: texel views unavailable rc={}; using storage sampling", int(rc));
+    }
+}
+
+void Switch2VulkanContext::setFrameDriven(bool enabled)
+{
+    if (presentation.isFrameDriven() == enabled)
+        return;
+    presentation.setFrameDriven(enabled);
+    brls::Logger::info("SWITCH2_VULKAN_PRESENT: frameDriven={} keepaliveMs=34 inputLoop=independent", enabled);
+}
+
+void Switch2VulkanContext::wakeFrame()
+{
+    std::lock_guard<std::mutex> lock(wakeMutex);
+    ++wakeGeneration;
+    frameReady.notify_one();
+}
+
+void Switch2VulkanContext::videoSource(bool direct, bool texel)
+{
+    videoDrawn  = true;
+    directVideo = direct;
+    texelVideo  = texel;
+}
+
+void Switch2VulkanContext::consumeAcquiredImage()
+{
+    if (!imageAcquired)
+        return;
+    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submit.waitSemaphoreCount = 1;
+    submit.pWaitSemaphores    = &flights[frameIndex].acquired;
+    submit.pWaitDstStageMask  = &stage;
+    check(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE), "consume held acquire");
+    imageAcquired = false;
+}
+
+void Switch2VulkanContext::reportPresentation(uint64_t now)
+{
+    if (!statsStart)
+        statsStart = now;
+    const uint64_t elapsed = now - statsStart;
+    if (elapsed < 1000000000)
+        return;
+    videoFPS = float(newFrames) * 1000000000.0f / elapsed;
+    brls::Logger::info("SWITCH2_VULKAN_PRESENT: presents={} newVideo={} repeatedVideo={} directBuffer={} copyBuffer={} texel={} storage={} skipped={} uniqueFPS={:.1f} frameDriven={}",
+        presents, newFrames, repeats, directPresents, copyPresents, texelPresents, storagePresents, skipped, videoFPS, presentation.isFrameDriven());
+    presents = newFrames = repeats = skipped = 0;
+    directPresents = copyPresents = texelPresents = storagePresents = 0;
+    statsStart                                                      = now;
 }
 
 void Switch2VulkanContext::release(Flight& flight)
@@ -262,6 +355,7 @@ void Switch2VulkanContext::destroyTargets()
 void Switch2VulkanContext::recreate()
 {
     std::lock_guard<std::mutex> lock(queueMutex);
+    consumeAcquiredImage();
     check(vkDeviceWaitIdle(device), "resize idle");
     for (auto& flight : flights)
         release(flight);
@@ -393,6 +487,11 @@ void Switch2VulkanContext::recreate()
 
 void Switch2VulkanContext::begin()
 {
+    {
+        std::lock_guard<std::mutex> lock(wakeMutex);
+        observedGeneration = wakeGeneration;
+    }
+    videoDrawn = newVideoFrame = directVideo = texelVideo = false;
     u32 w = extent.width, h = extent.height;
     nwindowGetDimensions(nwindowGetDefault(), &w, &h);
     if (resizePending || w != extent.width || h != extent.height)
@@ -400,16 +499,20 @@ void Switch2VulkanContext::begin()
     auto& flight = flights[frameIndex];
     check(vkWaitForFences(device, 1, &flight.fence, VK_TRUE, UINT64_MAX), "frame completion");
     release(flight);
-    VkResult rc = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, flight.acquired, VK_NULL_HANDLE, &imageIndex);
-    if (rc == VK_ERROR_OUT_OF_DATE_KHR)
+    if (!imageAcquired)
     {
-        recreate();
-        rc = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, flight.acquired, VK_NULL_HANDLE, &imageIndex);
+        VkResult rc = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, flight.acquired, VK_NULL_HANDLE, &imageIndex);
+        if (rc == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            recreate();
+            rc = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, flight.acquired, VK_NULL_HANDLE, &imageIndex);
+        }
+        if (rc == VK_SUBOPTIMAL_KHR)
+            resizePending = true;
+        else
+            check(rc, "acquire");
+        imageAcquired = true;
     }
-    if (rc == VK_SUBOPTIMAL_KHR)
-        resizePending = true;
-    else
-        check(rc, "acquire");
     check(vkResetCommandBuffer(command(), 0), "reset commands");
     VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -454,6 +557,21 @@ void Switch2VulkanContext::end()
 {
     vkCmdEndRenderPass(command());
     check(vkEndCommandBuffer(command()), "end commands");
+    const uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+    if (!presentation.shouldPresent(videoDrawn, newVideoFrame, resizePending, now))
+    {
+        // Keep the acquired image and its signaled semaphore until a real submit.
+        // The next begin resets these unsubmitted commands only after its fence.
+        ++skipped;
+        reportPresentation(now);
+        std::unique_lock<std::mutex> lock(wakeMutex);
+        frameReady.wait_for(lock, std::chrono::nanoseconds(presentation.waitNs(now)),
+            [this]
+            { return wakeGeneration != observedGeneration; });
+        return;
+    }
     auto& flight              = flights[frameIndex];
     VkPipelineStageFlags wait = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
@@ -478,6 +596,19 @@ void Switch2VulkanContext::end()
         resizePending = true;
     else
         check(rc, "present");
+    imageAcquired = false;
+    presentation.presented(now);
+    ++presents;
+    if (videoDrawn)
+    {
+        newFrames += newVideoFrame;
+        repeats += !newVideoFrame;
+        directPresents += directVideo;
+        copyPresents += !directVideo;
+        texelPresents += texelVideo;
+        storagePresents += !texelVideo;
+    }
+    reportPresentation(now);
     frameIndex = (frameIndex + 1) % flights.size();
 }
 
