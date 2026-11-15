@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise native mouse polling with USB and Joy-Con SDK responses."""
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +18,7 @@ using Result=u32;
 #define R_FAILED(rc) ((rc)!=0)
 #define R_SUCCEEDED(rc) ((rc)==0)
 constexpr u32 HidMouseAttribute_IsConnected=2;
+constexpr u32 HidMouseButton_Left=1,HidMouseButton_Right=2,HidMouseButton_Middle=4;
 struct HidMouseState {
     u64 sampling_number=0;
     s32 x=0,y=0,delta_x=0,delta_y=0,wheel_delta_x=0,wheel_delta_y=0;
@@ -81,6 +83,11 @@ int main(){
         assert(state.x==100&&state.y==200&&state.buttons==1);
         assert(state.delta_x==5&&state.delta_y==-6);
         assert(state.wheel_delta_x==1&&state.wheel_delta_y==2);
+        brls::SwitchInputManager input;
+        brls::RawMouseState raw;
+        input.currentMouseState=state;
+        input.updateMouseStates(&raw);
+        assert(raw.scroll.x==1&&raw.scroll.y==2); // USB menu scale is unchanged.
         state=mouse.update(); // Same sample: hold buttons, never replay movement/wheel.
         assert(state.buttons==1&&state.delta_x==0&&state.delta_y==0);
         assert(state.wheel_delta_x==0&&state.wheel_delta_y==0);
@@ -91,6 +98,17 @@ int main(){
         assert(near(state.x,100+7/1.5f)&&near(state.y,200+8/1.5f)&&state.buttons==3);
         assert(near(state.delta_x,5+7/1.5f)&&near(state.delta_y,-6+8/1.5f));
         assert(near(state.wheel_delta_y,2+3/120.0f)); // USB clicks plus fine Joy-Con units.
+        assert(state.menu_scroll_y==5); // Menu keeps the original raw pixel scale.
+        input.currentMouseState=state;
+        input.updateMouseStates(&raw);
+        assert(raw.scroll.y==5);
+        input.setMouseScrollSensitivity(0.1f);
+        input.updateMouseStates(&raw);
+        assert(near(raw.scroll.y,0.5f));
+        input.setMouseScrollSensitivity(2.0f);
+        input.updateMouseStates(&raw);
+        assert(raw.scroll.y==10);
+        assert(near(input.currentMouseState.wheel_delta_y,2+3/120.0f)); // UI gain never changes stream events.
         PadState first,second{false,2},handheld{true,0};
         assert(mouse.mouseSide(&first)==PadPointerSide_Right);
         assert(mouse.mouseSide(&second)==PadPointerSide_None);
@@ -191,11 +209,47 @@ def main():
     cxx = shutil.which("c++") or shutil.which("g++")
     if not cxx:
         raise SystemExit("A host C++ compiler is required for mouse tests")
+    source = (ROOT / "library/lib/platforms/switch/switch_input.cpp").read_text()
+    update = source[
+        source.index("void SwitchInputManager::updateMouseStates(") : source.index(
+            "void SwitchInputManager::runloopStart("
+        )
+    ]
+    header = (
+        ROOT / "library/include/borealis/platforms/switch/switch_input.hpp"
+    ).read_text()
+    setter = re.search(r"void setMouseScrollSensitivity\([^}]+\}", header)[0]
+    adapter = (
+        r"""
+#include <borealis/platforms/switch/switch_touch_coordinates.hpp>
+namespace brls {
+struct Point {
+    float x,y;
+    Point(float x=0,float y=0):x(x),y(y){}
+};
+struct RawMouseState {
+    Point position,offset,scroll;
+    bool leftButton=false,middleButton=false,rightButton=false;
+};
+struct Application {
+    inline static float windowWidth=1280,windowHeight=720,windowScale=1;
+};
+struct SwitchInputManager {
+    SwitchMouseState currentMouseState;
+    Point lastCursorPosition;
+    float menuScrollSensitivity=1;
+    void updateMouseStates(RawMouseState*);
+"""
+        + setter
+        + "\n};\n"
+        + update
+        + "\n}\n"
+    )
     with tempfile.TemporaryDirectory(prefix="borealis-mouse-") as name:
         tmp = Path(name)
         (tmp / "switch.h").write_text(SDK)
         source = tmp / "test.cpp"
-        source.write_text(SCENARIOS)
+        source.write_text(SCENARIOS.replace("int main(){", adapter + "\nint main(){"))
         for platform in ("switch1", "switch2"):
             binary = tmp / (platform + ".exe")
             subprocess.run(

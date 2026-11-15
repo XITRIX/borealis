@@ -27,6 +27,9 @@ An unavailable Joy-Con pointer service leaves USB input usable.
 Joy-Con movement defaults to two thirds of the native delta. Fractional movement
 is preserved; `setJoyConMouseCursorSpeed` applies an application's speed setting
 to the UI cursor without applying it again to relative streaming events.
+Menu scrolling retains native pixel deltas independently of normalized wheel
+events. `setMouseScrollSensitivity` changes menu scrolling; applications apply
+their stream sensitivity to wheel events independently, once per consumer.
 
 The Switch 2 C (Chat) button uses `hid:sys` command 171 to acquire its event,
 with the same PID, applet-resource ID and copied-handle ABI as Home/Capture.

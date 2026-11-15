@@ -67,6 +67,10 @@ class SwitchInputManager : public InputManager
     void clearVibration(int controller);
 #ifdef __SWITCH2__
     void setJoyConMouseCursorSpeed(float speed) { this->mouse.setCursorSpeed(speed); }
+    void setMouseScrollSensitivity(float sensitivity)
+    {
+        this->menuScrollSensitivity = std::isfinite(sensitivity) ? std::clamp(sensitivity, 0.1f, 2.0f) : 1.0f;
+    }
 #endif
 
     /*
@@ -137,6 +141,7 @@ class SwitchInputManager : public InputManager
     SwitchMouse mouse;
     SwitchMouseState currentMouseState = { };
 #ifdef __SWITCH2__
+    float menuScrollSensitivity = 1.0f;
     bool joyConMotionLogged = false;
     bool joyConScrollLogged = false;
 #endif

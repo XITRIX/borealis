@@ -14,6 +14,8 @@ struct SwitchMouseState
     float delta_x = 0, delta_y = 0;
     float wheel_delta_x = 0, wheel_delta_y = 0;
     u32 buttons = 0, attributes = 0;
+    // Menu gestures consume pixels; stream events consume wheel clicks.
+    float menu_scroll_x = 0, menu_scroll_y = 0;
 };
 
 // HID pointer coordinates use a fixed area; the UI maps it to its current scale.
@@ -79,6 +81,8 @@ class SwitchMouse
         SwitchMouseState state = { static_cast<float>(usb.x), static_cast<float>(usb.y),
             static_cast<float>(usb.delta_x), static_cast<float>(usb.delta_y),
             static_cast<float>(usb.wheel_delta_x), static_cast<float>(usb.wheel_delta_y), usb.buttons, usb.attributes };
+        state.menu_scroll_x    = usb.wheel_delta_x;
+        state.menu_scroll_y    = usb.wheel_delta_y;
 
 #ifdef __SWITCH2__
         if (this->pointerInitialized)
@@ -125,6 +129,7 @@ class SwitchMouse
                 // Native Joy-Con scrolling is much finer than a USB wheel
                 // click. Preserve fractions before applying application gain.
                 state.wheel_delta_y += this->mousePointer.wheel_delta_y / JOYCON_SCROLL_UNITS_PER_CLICK;
+                state.menu_scroll_y += this->mousePointer.wheel_delta_y;
                 state.buttons |= this->mousePointer.buttons_cur;
                 state.attributes |= HidMouseAttribute_IsConnected;
             }

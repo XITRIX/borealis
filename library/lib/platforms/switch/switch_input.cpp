@@ -433,8 +433,13 @@ void SwitchInputManager::updateMouseStates(RawMouseState* state)
 #else
         state->position = Point(currentMouseState.x, currentMouseState.y);
 #endif
-        state->offset       = Point(currentMouseState.delta_x, currentMouseState.delta_y);
-        state->scroll       = Point(currentMouseState.wheel_delta_x, currentMouseState.wheel_delta_y);
+        state->offset = Point(currentMouseState.delta_x, currentMouseState.delta_y);
+#ifdef __SWITCH2__
+        state->scroll = Point(currentMouseState.menu_scroll_x * menuScrollSensitivity,
+            currentMouseState.menu_scroll_y * menuScrollSensitivity);
+#else
+        state->scroll = Point(currentMouseState.wheel_delta_x, currentMouseState.wheel_delta_y);
+#endif
         state->leftButton   = currentMouseState.buttons & HidMouseButton_Left;
         state->middleButton = currentMouseState.buttons & HidMouseButton_Middle;
         state->rightButton  = currentMouseState.buttons & HidMouseButton_Right;
