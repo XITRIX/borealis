@@ -16,6 +16,8 @@ SDK = r"""
 using u64=uint64_t;using s32=int32_t;using u32=uint32_t;using Handle=u32;using Result=u32;
 constexpr Handle INVALID_HANDLE=0;
 constexpr int CUR_THREAD_HANDLE=1;
+constexpr int GAMEPADS_MAX=5;
+struct PadState {};
 constexpr int SfOutHandleAttr_HipcCopy=2;
 #define R_FAILED(rc) ((rc)!=0)
 #define R_SUCCEEDED(rc) ((rc)==0)
@@ -24,6 +26,9 @@ struct Event {Handle handle=0;bool autoclear=false;};
 struct Service{};
 struct SfDispatchParams {bool in_send_pid;u32 out_handle_attrs[1];Handle* out_handles;};
 inline Result chatResult=0,captureResult=0,homeResult=0;
+inline Result ownerResult=0;
+inline u32 activePad=0;
+inline Result hidsysGetLastActiveNpad(u32* out){*out=activePad;return ownerResult;}
 inline int loads=0,closes=0;
 inline std::vector<Handle> cleared;
 inline u64 appletGetAppletResourceUserId(){return 0x12345678;}
@@ -56,6 +61,7 @@ inline Waiter waiterForEvent(Event* event){return {event->handle};}
 
 MODEL = r"""
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <functional>
 #include <stop_token>
@@ -96,6 +102,12 @@ Result waitObjects(s32* index,const Waiter* events,s32 count,u64 timeout){
     *index=sequence[cursor++];return waitResult;
 }
 struct SwitchInputManager {
+    std::atomic<bool> halfMappingEnabled=false;
+    std::array<std::atomic<u32>,5> halfSystemClaims={};
+    std::array<std::atomic<u64>,3> halfSourceCandidates={};
+    std::atomic<u32> halfAnyClaims=0;
+    std::array<std::atomic<bool>,3> halfSystemConsumed={};
+    std::array<std::atomic<int>,3> systemButtonOwners={-1,-1,-1};
     std::atomic<ButtonOverrideMode> m_screenshotButtonMode=ButtonOverrideMode::NONE;
     std::atomic<ButtonOverrideMode> m_homeButtonMode=ButtonOverrideMode::NONE;
     std::atomic<bool> m_isScreenshotPressed=false,m_isHomePressed=false;
@@ -104,6 +116,8 @@ struct SwitchInputManager {
     std::atomic<bool> m_isChatPressed=false;
 #endif
     void system_button_thread_fn(std::stop_token);
+    void processSystemButtonEvent(::Event*,int);
+    void applyHalfMapping(ControllerState*,PadState*,u64){}
 """
 
 SCENARIOS = r"""
@@ -167,6 +181,65 @@ int main(){
     assert(closes==2);
 #endif
     assert(!input.isHomeButtonPressed()&&!input.isScreenshotButtonPressed());
+    waitResult=0;chatResult=0;
+    input.halfMappingEnabled=true;
+    input.halfSystemClaims[0]=1;input.halfAnyClaims=1;
+    input.halfSourceCandidates[0]=1;
+    input.setScreenshotButtonOverrideMode(ButtonOverrideMode::GUIDE_BUTTON);
+    bool halfDown=false;
+    observe=[&]{if(cursor==1){halfDown=input.m_isScreenshotPressed&&input.halfSystemConsumed[0];assert(!input.guide());assert(!input.isScreenshotButtonPressed());}};
+#ifdef __SWITCH2__
+    run(input,{0,0},3);
+#else
+    run(input,{0,0},2);
+#endif
+    assert(halfDown);
+    activePad=1;
+    input.halfSourceCandidates[0]=3;
+    bool menuDown=false;
+    observe=[&]{if(cursor==1)menuDown=input.isScreenshotButtonPressed()&&input.guide();};
+#ifdef __SWITCH2__
+    run(input,{0,0},3);
+#else
+    run(input,{0,0},2);
+#endif
+    assert(menuDown);
+    // A stale last-active right half cannot own Capture. A unique physical
+    // source is safe to infer, while multiple possible sources remain ambiguous.
+    input.halfSourceCandidates[0]=1;
+    halfDown=false;
+    observe=[&]{if(cursor==1)halfDown=input.halfSystemConsumed[0]&&input.systemButtonOwners[0]==0;};
+#ifdef __SWITCH2__
+    run(input,{0,0},3);
+#else
+    run(input,{0,0},2);
+#endif
+    assert(halfDown);
+#ifdef __SWITCH2__
+    input.halfSystemClaims[0]=6;input.halfAnyClaims=6;
+    input.halfSourceCandidates[1]=input.halfSourceCandidates[2]=1;
+    input.setChatButtonOverrideMode(ButtonOverrideMode::CUSTOM_EVENT);
+    input.setHomeButtonOverrideMode(ButtonOverrideMode::GUIDE_BUTTON);
+    bool homeDown=false,chatDown=false;
+    observe=[&]{
+        if(cursor==1)homeDown=input.halfSystemConsumed[1]&&!input.isHomeButtonPressed()&&!input.guide();
+        if(cursor==3)chatDown=input.halfSystemConsumed[2]&&!input.isChatButtonPressed()&&!input.guide();
+    };
+    run(input,{1,1,2,2},3);
+    assert(homeDown&&chatDown);
+    input.halfSystemClaims[0]=1;input.halfAnyClaims=1;
+#endif
+    observe={};ownerResult=9;
+    input.halfSourceCandidates[0]=3;
+    input.halfSystemClaims[1]=1;
+    input.setScreenshotButtonOverrideMode(ButtonOverrideMode::NONE);
+#ifdef __SWITCH2__
+    run(input,{0,0},3);
+#else
+    run(input,{0,0},2);
+#endif
+    int captureClears=0;for(auto h:cleared)if(h==141)++captureClears;
+    assert(captureClears==1);
 }
 """
 
@@ -181,7 +254,7 @@ def main():
     ).read_text()
     worker = source[
         source.index(
-            "void SwitchInputManager::system_button_thread_fn("
+            "void SwitchInputManager::processSystemButtonEvent("
         ) : source.rindex("} // namespace brls")
     ]
     methods = header[
@@ -201,7 +274,7 @@ def main():
         harness.write_text(
             MODEL
             + methods
-            + "bool guide(){ControllerState value;auto* state=&value;\n"
+            + "bool guide(){ControllerState value;auto* state=&value;PadState* pad=nullptr;u64 keysDown=0;\n"
             + guide
             + "return value.buttons[BUTTON_GUIDE];}\n};\n"
             + worker

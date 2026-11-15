@@ -198,8 +198,10 @@ bool Application::mainLoop()
 
 bool Application::internalMainLoop()
 {
+    Time currentTime = getCPUTimeUsec();
+    Application::frameDeltaTime = Application::frameStartTime == 0 ? 0 : currentTime - Application::frameStartTime;
+    Application::frameStartTime = currentTime;
     Application::updateFPS();
-    Application::frameStartTime = getCPUTimeUsec();
     Application::setActiveEvent(false);
 
     // Main loop callback
@@ -231,21 +233,22 @@ bool Application::internalMainLoop()
     runLoopEvent.fire();
 
     // Free views deletion pool.
-    // A view deletion might inserts other views to deletionPool
-    std::deque<View*> undeletedViews;
-    for (auto view : Application::deletionPool)
+    // Destructors can enqueue children. Process this frame's original entries
+    // without holding iterators across deletion; new entries wait until next frame.
+    for (size_t pending = Application::deletionPool.size(); pending > 0; --pending)
     {
+        auto* view = Application::deletionPool.front();
+        Application::deletionPool.pop_front();
         if (!view->isPtrLocked())
         {
             delete view;
         }
         else
         {
-            undeletedViews.push_back(view);
+            Application::deletionPool.push_back(view);
             brls::Logger::verbose("Application: will delete view: {}", view->describe());
         }
     }
-    Application::deletionPool = undeletedViews;
 
     if (Application::limitedFrameTime > 0)
     {
@@ -850,21 +853,30 @@ void Application::exit()
     exitEvent.fire();
     Logger::info("Exiting...");
 
+    if (auto* video = Application::platform->getVideoContext())
+        video->waitIdle();
+    Logger::info("SHUTDOWN: clearing activities");
     Application::clear();
 
-    // Free views deletion pool
-    for (auto view : Application::deletionPool)
+    // Free views deletion pool, including children enqueued by destructors.
+    while (!Application::deletionPool.empty())
+    {
+        auto* view = Application::deletionPool.front();
+        Application::deletionPool.pop_front();
         delete view;
+    }
 
-    Application::deletionPool.clear();
-
+    Logger::info("SHUTDOWN: views cleared; stopping workers");
     ThreadPool::shutdownGlobal();
     Threading::stop();
 
     exitDoneEvent.fire();
 
+    Logger::info("SHUTDOWN: workers stopped; destroying platform");
     delete Application::notificationManager;
     delete Application::platform;
+    Application::platform = nullptr;
+    Logger::info("SHUTDOWN: complete");
 }
 
 void Application::setGlobalQuit(bool enabled)
@@ -894,6 +906,11 @@ bool Application::getFPSStatus()
 size_t Application::getFPS()
 {
     return Application::globalFPS;
+}
+
+float Application::getFrameTime()
+{
+    return Application::frameDeltaTime / 1000000.0f;
 }
 
 void Application::setLimitedFPS(size_t fps)
@@ -1097,7 +1114,7 @@ std::string Application::getLocale()
 
 void Application::addToFreeQueue(View* view)
 {
-    if (std::binary_search(deletionPool.cbegin(), deletionPool.cend(), view))
+    if (std::find(deletionPool.cbegin(), deletionPool.cend(), view) != deletionPool.cend())
         return;
 
     brls::Logger::verbose("Application::addToFreeQueue {}", view->describe());

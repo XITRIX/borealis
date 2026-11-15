@@ -250,11 +250,11 @@ void ScrollingFrame::naturalScrollingButtonProcessing(FocusDirection focusDirect
     {
         case FocusDirection::UP:
             isBorder = getContentOffsetY() <= 0;
-            newOffset -= (1000.0f / Application::getFPS());
+            newOffset -= 1000.0f * Application::getFrameTime();
             break;
         case FocusDirection::DOWN:
             isBorder = getContentOffsetY() >= bottomLimit;
-            newOffset += (1000.0f / Application::getFPS());
+            newOffset += 1000.0f * Application::getFrameTime();
             break;
         default:
             break;

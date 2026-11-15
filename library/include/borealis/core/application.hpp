@@ -228,6 +228,12 @@ class Application
     static size_t getFPS();
 
     /**
+     * Measured time between main-loop iterations, in seconds (0 on the first).
+     * Use this for continuous movement instead of the averaged FPS counter.
+     */
+    static float getFrameTime();
+
+    /**
      * Set the FPS limit
      * @param fps 0 to disable limit
      */
@@ -437,6 +443,7 @@ class Application
     inline static size_t globalFPS                      = 60;
     inline static Time limitedFrameTime                 = 0;
     inline static Time frameStartTime                   = 0;
+    inline static Time frameDeltaTime                   = 0;
     inline static bool hintsLiteMode                    = false;
 
     inline static bool deactivatedBehavior = false;

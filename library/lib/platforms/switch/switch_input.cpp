@@ -283,14 +283,16 @@ void SwitchInputManager::updateControllerStateInner(ControllerState* state, PadS
     state->buttons[BUTTON_GUIDE] = false;
 
     if (m_screenshotButtonMode == ButtonOverrideMode::GUIDE_BUTTON)
-        state->buttons[BUTTON_GUIDE] |= m_isScreenshotPressed;
+        state->buttons[BUTTON_GUIDE] |= isScreenshotButtonPressed();
 
     if (m_homeButtonMode == ButtonOverrideMode::GUIDE_BUTTON)
-        state->buttons[BUTTON_GUIDE] |= m_isHomePressed;
+        state->buttons[BUTTON_GUIDE] |= isHomeButtonPressed();
 #ifdef __SWITCH2__
     if (m_chatButtonMode == ButtonOverrideMode::GUIDE_BUTTON)
-        state->buttons[BUTTON_GUIDE] |= m_isChatPressed;
+        state->buttons[BUTTON_GUIDE] |= isChatButtonPressed();
 #endif
+
+    applyHalfMapping(state, pad, keysDown);
 
     HidAnalogStickState analog_stick_l = padGetStickPos(pad, 0);
     HidAnalogStickState analog_stick_r = padGetStickPos(pad, 1);
@@ -449,6 +451,7 @@ void SwitchInputManager::updateMouseStates(RawMouseState* state)
 
 void SwitchInputManager::runloopStart()
 {
+    refreshHalfJoyConClaims();
     upToDateMouseState();
     handleMouse();
     handleKeyboard();
@@ -752,29 +755,174 @@ void SwitchInputManager::hidInitializeKeyboardMap()
     }
 }
 
+void SwitchInputManager::setHalfJoyConMapping(HalfJoyConSide side, const HalfJoyConMapping& mapping)
+{
+    if (side == HalfJoyConSide::NONE)
+        return;
+    auto& target = halfMappings[side == HalfJoyConSide::LEFT ? 0 : 1];
+    for (size_t i = 0; i < mapping.size(); ++i)
+        target[i] = validHalfJoyConAction(mapping[i]) ? mapping[i] : HALF_JOYCON_UNMAPPED;
+    refreshHalfJoyConClaims();
+}
+
+void SwitchInputManager::setHalfJoyConMappingEnabled(bool enabled)
+{
+    halfMappingEnabled = enabled;
+    refreshHalfJoyConClaims();
+    if (!enabled)
+    {
+        if (halfSystemConsumed[0].exchange(false))
+            m_isScreenshotPressed = false;
+        if (halfSystemConsumed[1].exchange(false))
+            m_isHomePressed = false;
+#ifdef __SWITCH2__
+        if (halfSystemConsumed[2].exchange(false))
+            m_isChatPressed = false;
+#endif
+    }
+}
+
+bool SwitchInputManager::isHalfJoyConMappingActive(int controller) const
+{
+    if (!halfMappingEnabled || controller < 0 || controller >= GAMEPADS_MAX)
+        return false;
+    if (padStateHandheld.active_handheld)
+    {
+        if (controller == 0)
+            return false;
+        --controller;
+    }
+    return halfJoyConSide(padsState[controller].style_set) != HalfJoyConSide::NONE;
+}
+
+void SwitchInputManager::refreshHalfJoyConClaims()
+{
+    u32 combined                  = 0;
+    std::array<u64, 3> candidates = { };
+    if (halfMappingEnabled)
+    {
+        padUpdate(&padStateHandheld);
+        if (padStateHandheld.active_handheld)
+            for (auto& candidate : candidates)
+                candidate |= 1ULL << HidNpadIdType_Handheld;
+    }
+    for (int i = 0; i < GAMEPADS_MAX; ++i)
+    {
+        u32 claims = 0;
+        if (halfMappingEnabled)
+        {
+            padUpdate(&padsState[i]);
+            const auto side = halfJoyConSide(padsState[i].style_set);
+            if (padsState[i].style_set)
+            {
+                const u32 supported = side == HalfJoyConSide::LEFT ? 1U : side == HalfJoyConSide::RIGHT ? 6U
+                                                                                                        : 7U;
+                for (size_t button = 0; button < candidates.size(); ++button)
+                    if (supported & (1U << button))
+                        candidates[button] |= 1ULL << i;
+            }
+            if (side != HalfJoyConSide::NONE)
+                claims = halfJoyConSystemClaims(halfMappings[side == HalfJoyConSide::LEFT ? 0 : 1], side);
+        }
+        if (halfSystemClaims[i].exchange(claims) != claims)
+            Logger::info("HALF_JOYCON: pad={} claims=0x{:x}", i, claims);
+        combined |= claims;
+    }
+    halfAnyClaims = combined;
+    for (size_t button = 0; button < candidates.size(); ++button)
+        halfSourceCandidates[button] = candidates[button];
+}
+
+void SwitchInputManager::applyHalfMapping(ControllerState* state, PadState* pad, u64 buttons)
+{
+    const auto side = halfJoyConSide(pad->style_set);
+    if (!halfMappingEnabled || side == HalfJoyConSide::NONE)
+        return;
+    int owner = -1;
+    for (int i = 0; i < GAMEPADS_MAX; ++i)
+        if (pad->id_mask & (1U << i))
+        {
+            owner = i;
+            break;
+        }
+    const int system         = side == HalfJoyConSide::LEFT ? 0 : 1;
+    const bool held          = system == 0 ? m_isScreenshotPressed.load() : m_isHomePressed.load();
+    const bool systemPressed = held && halfSystemConsumed[system] && systemButtonOwners[system] == owner;
+    bool chatPressed         = false;
+#ifdef __SWITCH2__
+    chatPressed = side == HalfJoyConSide::RIGHT && m_isChatPressed && halfSystemConsumed[2] && systemButtonOwners[2] == owner;
+#endif
+    applyHalfJoyConMapping(state, halfMappings[side == HalfJoyConSide::LEFT ? 0 : 1], side, buttons, systemPressed, chatPressed);
+}
+
+void SwitchInputManager::processSystemButtonEvent(::Event* event, int button)
+{
+    std::atomic<ButtonOverrideMode>* mode = button == 0 ? &m_screenshotButtonMode : &m_homeButtonMode;
+    std::atomic<bool>* held               = button == 0 ? &m_isScreenshotPressed : &m_isHomePressed;
+#ifdef __SWITCH2__
+    if (button == 2)
+    {
+        mode = &m_chatButtonMode;
+        held = &m_isChatPressed;
+    }
+#endif
+    const bool wasPressed = held->load();
+    bool halfConsumed     = halfSystemConsumed[button];
+    int owner             = systemButtonOwners[button];
+    if (!wasPressed)
+    {
+        if (mode->load() == ButtonOverrideMode::NONE && !(halfAnyClaims.load() & (1U << button)))
+            return;
+        u32 active               = 0;
+        const Result result      = hidsysGetLastActiveNpad(&active);
+        owner                    = R_SUCCEEDED(result) ? static_cast<int>(active) : -1;
+        const u64 candidates     = halfSourceCandidates[button];
+        const bool possibleOwner = owner >= 0 && owner < 64 && (candidates & (1ULL << owner));
+        if (halfMappingEnabled && (R_FAILED(result) || !possibleOwner))
+        {
+            // A right half has no Capture button, for example. Infer ownership
+            // only if exactly one connected controller can produce this event.
+            owner = -1;
+            if (candidates && !(candidates & (candidates - 1)))
+                for (int i = 0; i < 64; ++i)
+                    if (candidates & (1ULL << i))
+                    {
+                        owner = i;
+                        break;
+                    }
+        }
+        halfConsumed = halfMappingEnabled && owner >= 0 && owner < GAMEPADS_MAX
+            && (halfSystemClaims[owner].load() & (1U << button));
+    }
+    if (!halfConsumed && mode->load() == ButtonOverrideMode::NONE)
+        return;
+    eventClear(event);
+    systemButtonOwners[button] = owner;
+    halfSystemConsumed[button] = !wasPressed && halfConsumed;
+    *held                      = !wasPressed;
+    Logger::info("SWITCH_SYSTEM_BUTTON: button={} owner={} pressed={} half={} mode={}",
+        button, owner, !wasPressed, halfConsumed, static_cast<int>(mode->load()));
+}
+
 void SwitchInputManager::system_button_thread_fn(std::stop_token token)
 {
-    // This needs a high priority because we are racing am to clear the event
     svcSetThreadPriority(CUR_THREAD_HANDLE, 0x20);
-
     NXEvent screenshot_evt = { };
     if (auto rc = hidsysAcquireCaptureButtonEventHandle(&screenshot_evt, false); R_FAILED(rc))
     {
-        Logger::error("Failed to acquire the screenshot button event: {}\n", rc);
+        Logger::error("Failed to acquire the screenshot button event: {}", rc);
         return;
     }
     DEFER([&screenshot_evt]
         { eventClose(&screenshot_evt); });
-
     NXEvent home_evt = { };
     if (auto rc = hidsysAcquireHomeButtonEventHandle(&home_evt, false); R_FAILED(rc))
     {
-        Logger::error("Failed to acquire the home button event: {}\n", rc);
+        Logger::error("Failed to acquire the home button event: {}", rc);
         return;
     }
     DEFER([&home_evt]
         { eventClose(&home_evt); });
-
 #ifdef __SWITCH2__
     NXEvent chat_evt        = { };
     const Result chatResult = acquireSwitchChatButtonEvent(&chat_evt, false);
@@ -785,10 +933,8 @@ void SwitchInputManager::system_button_thread_fn(std::stop_token token)
     if (hasChatEvent)
         eventClear(&chat_evt);
 #endif
-
     eventClear(&screenshot_evt);
     eventClear(&home_evt);
-
     while (!token.stop_requested())
     {
         s32 idx               = -1;
@@ -805,7 +951,6 @@ void SwitchInputManager::system_button_thread_fn(std::stop_token token)
         const int eventCount = 2;
 #endif
         const Result rc = waitObjects(&idx, events, eventCount, std::chrono::nanoseconds(50ms).count());
-
         if (rc == KERNELRESULT(TimedOut))
             continue;
         if (R_FAILED(rc))
@@ -813,56 +958,14 @@ void SwitchInputManager::system_button_thread_fn(std::stop_token token)
             Logger::warning("System button event wait failed: 0x{:x}", rc);
             break;
         }
-
-        switch (idx)
-        {
-            case 0: // Screenshot button
-                if (this->m_screenshotButtonMode == ButtonOverrideMode::NONE)
-                    break;
-
-                eventClear(&screenshot_evt);
-
-                if (!m_isScreenshotPressed.load())
-                {
-                    m_isScreenshotPressed = true;
-                    Logger::info("Screenshot button clicked");
-                }
-                else
-                {
-                    m_isScreenshotPressed = false;
-                    Logger::info("Screenshot button released");
-                }
-                break;
-            case 1: // Home button
-                if (this->m_homeButtonMode == ButtonOverrideMode::NONE)
-                    break;
-
-                eventClear(&home_evt);
-
-                if (!m_isHomePressed.load())
-                {
-                    m_isHomePressed = true;
-                    Logger::info("Home button clicked");
-                }
-                else
-                {
-                    m_isHomePressed = false;
-                    Logger::info("Home button released");
-                }
-                break;
+        if (idx == 0)
+            processSystemButtonEvent(&screenshot_evt, 0);
+        else if (idx == 1)
+            processSystemButtonEvent(&home_evt, 1);
 #ifdef __SWITCH2__
-            case 2: // Chat (C) button
-                if (this->m_chatButtonMode == ButtonOverrideMode::NONE)
-                    break;
-                eventClear(&chat_evt);
-                m_isChatPressed = !m_isChatPressed.load();
-                Logger::info("SWITCH2_CHAT_BUTTON: pressed={} mode={}", m_isChatPressed.load(),
-                    static_cast<int>(m_chatButtonMode.load()));
-                break;
+        else if (idx == 2)
+            processSystemButtonEvent(&chat_evt, 2);
 #endif
-            default:
-                break;
-        }
     }
     m_isScreenshotPressed = false;
     m_isHomePressed       = false;

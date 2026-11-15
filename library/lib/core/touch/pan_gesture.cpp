@@ -66,7 +66,7 @@ GestureState PanGestureRecognizer::recognitionLoop(TouchState touch, MouseState 
         }
     }
 
-    static PanAcceleration acceleration;
+    PanAcceleration acceleration{};
     switch (phase)
     {
         case TouchPhase::START:
@@ -129,12 +129,12 @@ GestureState PanGestureRecognizer::recognitionLoop(TouchState touch, MouseState 
 
             // If last touch frame, calculate acceleration
 
-            if (this->state == GestureState::END)
+            if (this->state == GestureState::END && posHistory.size() >= 2 && posHistory.front().time > posHistory.back().time)
             {
-                float time = posHistory.size() * 1.0f / Application::getFPS();
+                float time = (posHistory.front().time - posHistory.back().time) / 1000000.0f;
 
-                float distanceX = posHistory[posHistory.size()-1].x - posHistory[0].x;
-                float distanceY = posHistory[posHistory.size()-1].y - posHistory[0].y;
+                float distanceX = posHistory.back().position.x - posHistory.front().position.x;
+                float distanceY = posHistory.back().position.y - posHistory.front().position.y;
 
                 float velocityX = distanceX / time;
                 float velocityY = distanceY / time;
@@ -164,7 +164,7 @@ GestureState PanGestureRecognizer::recognitionLoop(TouchState touch, MouseState 
     }
 
     // Add current state to history
-    posHistory.insert(posHistory.begin(), this->position);
+    posHistory.insert(posHistory.begin(), PanSample{ this->position, getCPUTimeUsec() });
     while (posHistory.size() > HISTORY_LIMIT)
     {
         posHistory.pop_back();

@@ -232,7 +232,10 @@ retro_time_t cpu_features_get_time_usec(void)
    return ticks_to_microsecs(gettime());
 #elif defined(WIIU)
    return ticks_to_us(OSGetSystemTime());
-#elif defined(SWITCH) || defined(HAVE_LIBNX)
+#elif defined(HAVE_LIBNX)
+   /* libnx/libounce use different counter frequencies on Switch 1 and 2. */
+   return armTicksToNs(armGetSystemTick()) / 1000;
+#elif defined(SWITCH)
    return (svcGetSystemTick() * 10) / 192;
 #elif defined(_3DS)
    return osGetTime() * 1000;

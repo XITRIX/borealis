@@ -46,6 +46,12 @@ class VideoContext
     virtual void endFrame() = 0;
 
     /**
+     * Wait for submitted graphics work before views release their GPU resources.
+     * Backends with synchronous or driver-managed deletion can keep the default.
+     */
+    virtual void waitIdle() { }
+
+    /**
      * Can be called by the application to reset the graphics
      * state, in case there is a need to use the graphics API
      * directly (for instance direct OpenGL calls).

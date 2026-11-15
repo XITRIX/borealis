@@ -18,6 +18,16 @@ The backend follows libounce's native output size, including TV-resolution
 changes, and requests the platform's 120 Hz handheld / 60 Hz docked policy.
 Physical dock/TV mode switching still needs device testing.
 
+Borealis uses the SDK's `armTicksToNs(armGetSystemTick())` conversion for its
+microsecond clock. The counter is 19.2 MHz on Switch 1 and 31.25 MHz on Switch 2;
+the old fixed Switch 1 conversion ran animations and button repeat about 1.63
+times too fast on Switch 2. Animations and the 250 ms initial / 100 ms subsequent
+button repeats use elapsed time. Continuous slider/scroll movement uses measured
+main-loop time, and swipe inertia uses timestamps from the actual touch samples,
+independent of the averaged FPS display. `tests/test_timing.py` exercises the real
+timing and movement code with mocked SDK clocks at 30/60/120/144 FPS and variable
+cadence. These host checks do not establish device timing or perceived UI feel.
+
 The native input backend accepts either Joy-Con 2 of the primary controller as
 a mouse, alongside USB mice. L/R clicks, ZL/ZR right-clicks, pressing the stick
 middle-clicks, and the stick scrolls. Movement is read once per input loop through
@@ -41,6 +51,29 @@ It follows the existing Home/Capture event-clearing interception mechanism;
 `NONE` leaves normal system handling enabled. Acquiring Chat is optional, and
 failure keeps the Home/Capture worker running. Shared modes and button states
 are atomic, and disabling an override clears its held state.
+
+`VideoContext::waitIdle` lets asynchronous backends finish graphics work before
+application shutdown destroys views and their textures. Switch 2 implements it
+with the device idle wait under the queue lock. Shutdown logs identify each
+teardown stage and completion. The deferred deletion queue uses pop-front
+iteration so destructors can safely enqueue descendants; duplicate scheduling
+uses linear lookup because queue insertion order is not sorted. Checked-iterator
+regressions in `test_deletion_queue.py` cover frame/exit draining, locks, duplicate
+requests and the graphics-before-view destruction order.
+
+On both Switch targets, `setHalfJoyConMapping` configures separate horizontal
+left/right profiles. `setHalfJoyConMappingEnabled` lets an application activate
+them only while forwarding game input; ordinary UI controls remain unchanged.
+`half_joycon_mapping.hpp` defines SDK-independent action arrays and defaults;
+`switch_half_joycon.hpp` projects physical buttons into a controller state.
+Unassigned Home/Capture/C bindings fall through to the existing override mode,
+then system handling. Assigned bindings consume the event before overlay/Guide
+handling and are delivered only to their controller. The event worker latches
+the last-active Npad through release, using a unique physically capable source
+only when the reported controller is unavailable or incapable. It does not guess
+among several possible sources. Atomic claim snapshots avoid reading PadState
+or mutable mappings on the event thread. `test_half_joycon.py` and
+`test_system_buttons.py` cover both target configurations.
 
 Applications drawing video or other custom Vulkan content can use
 `brls::Switch2VulkanContext::current()` from

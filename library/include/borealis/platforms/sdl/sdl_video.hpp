@@ -39,6 +39,9 @@ class SDLVideoContext : public VideoContext
     void clear(NVGcolor color) override;
     void beginFrame() override;
     void endFrame() override;
+#ifdef __SWITCH2__
+    void waitIdle() override;
+#endif
     void setSwapInterval(int interval) override;
     void resetState() override;
     void fullScreen(bool fs) override;

@@ -674,5 +674,13 @@ void SDLVideoContext::beginFrame()
 }
 void SDLVideoContext::clear(NVGcolor color) { context->clear(color); }
 void SDLVideoContext::endFrame() { context->end(); }
+void SDLVideoContext::waitIdle()
+{
+    if (!context || !context->device)
+        return;
+    std::lock_guard<std::mutex> lock(context->queueMutex);
+    const auto result = vkDeviceWaitIdle(context->device);
+    Logger::info("SHUTDOWN: Vulkan idle rc={}", static_cast<int>(result));
+}
 }
 #endif

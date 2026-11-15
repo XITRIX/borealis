@@ -18,6 +18,7 @@
 
 #include <borealis/core/event.hpp>
 #include <borealis/core/gesture.hpp>
+#include <borealis/core/time.hpp>
 
 namespace brls
 {
@@ -86,7 +87,12 @@ class PanGestureRecognizer : public GestureRecognizer
     Point startPosition;
     Point delta;
     PanAxis axis;
-    std::vector<Point> posHistory;
+    struct PanSample
+    {
+        Point position;
+        Time time;
+    };
+    std::vector<PanSample> posHistory;
     GestureState lastState;
 };
 
