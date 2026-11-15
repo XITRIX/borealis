@@ -20,6 +20,7 @@
 #include <borealis/platforms/switch/switch_input.hpp>
 #ifdef __SWITCH2__
 #include <borealis/platforms/switch/switch_touch_coordinates.hpp>
+#include <borealis/platforms/switch/switch_chat_button.hpp>
 #endif
 #include <borealis/core/application.hpp>
 
@@ -109,7 +110,7 @@ static const size_t SWITCH_AXIS_MAPPING[_AXES_MAX] = {
 
 SwitchInputManager::SwitchInputManager()
 {
-    this->screenshot_button_thread = std::jthread(&SwitchInputManager::screenshot_button_thread_fn, this);
+    this->system_button_thread = std::jthread(&SwitchInputManager::system_button_thread_fn, this);
 
     padConfigureInput(GAMEPADS_MAX, HidNpadStyleSet_NpadStandard);
     hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
@@ -153,9 +154,9 @@ SwitchInputManager::SwitchInputManager()
 
 SwitchInputManager::~SwitchInputManager()
 {
-    this->screenshot_button_thread.request_stop();
-    if (this->screenshot_button_thread.joinable())
-        this->screenshot_button_thread.join();
+    this->system_button_thread.request_stop();
+    if (this->system_button_thread.joinable())
+        this->system_button_thread.join();
 
     if (this->cursorTexture != 0)
     {
@@ -286,6 +287,10 @@ void SwitchInputManager::updateControllerStateInner(ControllerState* state, PadS
 
     if (m_homeButtonMode == ButtonOverrideMode::GUIDE_BUTTON)
         state->buttons[BUTTON_GUIDE] |= m_isHomePressed;
+#ifdef __SWITCH2__
+    if (m_chatButtonMode == ButtonOverrideMode::GUIDE_BUTTON)
+        state->buttons[BUTTON_GUIDE] |= m_isChatPressed;
+#endif
 
     HidAnalogStickState analog_stick_l = padGetStickPos(pad, 0);
     HidAnalogStickState analog_stick_r = padGetStickPos(pad, 1);
@@ -742,51 +747,83 @@ void SwitchInputManager::hidInitializeKeyboardMap()
     }
 }
 
-void SwitchInputManager::screenshot_button_thread_fn(std::stop_token token) {
+void SwitchInputManager::system_button_thread_fn(std::stop_token token)
+{
     // This needs a high priority because we are racing am to clear the event
     svcSetThreadPriority(CUR_THREAD_HANDLE, 0x20);
 
-    NXEvent screenshot_evt;
-    DEFER([&screenshot_evt] { eventClose(&screenshot_evt); });
-    if (auto rc = hidsysAcquireCaptureButtonEventHandle(&screenshot_evt, false); R_FAILED(rc)) {
+    NXEvent screenshot_evt = { };
+    if (auto rc = hidsysAcquireCaptureButtonEventHandle(&screenshot_evt, false); R_FAILED(rc))
+    {
         Logger::error("Failed to acquire the screenshot button event: {}\n", rc);
         return;
     }
+    DEFER([&screenshot_evt]
+        { eventClose(&screenshot_evt); });
 
-    NXEvent home_evt;
-    DEFER([&home_evt] { eventClose(&home_evt); });
-    if (auto rc = hidsysAcquireHomeButtonEventHandle(&home_evt, false); R_FAILED(rc)) {
+    NXEvent home_evt = { };
+    if (auto rc = hidsysAcquireHomeButtonEventHandle(&home_evt, false); R_FAILED(rc))
+    {
         Logger::error("Failed to acquire the home button event: {}\n", rc);
         return;
     }
+    DEFER([&home_evt]
+        { eventClose(&home_evt); });
+
+#ifdef __SWITCH2__
+    NXEvent chat_evt        = { };
+    const Result chatResult = acquireSwitchChatButtonEvent(&chat_evt, false);
+    const bool hasChatEvent = R_SUCCEEDED(chatResult);
+    DEFER([&]
+        { if (hasChatEvent) eventClose(&chat_evt); });
+    Logger::info("SWITCH2_CHAT_BUTTON: acquireEvent rc=0x{:x} available={}", chatResult, hasChatEvent);
+    if (hasChatEvent)
+        eventClear(&chat_evt);
+#endif
 
     eventClear(&screenshot_evt);
     eventClear(&home_evt);
 
-    u64 screenshot_down_start_tick = 0;
-    u64 home_down_start_tick = 0;
-
-    while (!token.stop_requested()) {
-        s32 idx;
-        auto rc = waitMulti(&idx, std::chrono::nanoseconds(50ms).count(),
-            waiterForEvent(&screenshot_evt), waiterForEvent(&home_evt));
+    while (!token.stop_requested())
+    {
+        s32 idx               = -1;
+        const Waiter events[] = {
+            waiterForEvent(&screenshot_evt),
+            waiterForEvent(&home_evt),
+#ifdef __SWITCH2__
+            waiterForEvent(&chat_evt),
+#endif
+        };
+#ifdef __SWITCH2__
+        const int eventCount = hasChatEvent ? 3 : 2;
+#else
+        const int eventCount = 2;
+#endif
+        const Result rc = waitObjects(&idx, events, eventCount, std::chrono::nanoseconds(50ms).count());
 
         if (rc == KERNELRESULT(TimedOut))
             continue;
+        if (R_FAILED(rc))
+        {
+            Logger::warning("System button event wait failed: 0x{:x}", rc);
+            break;
+        }
 
-        switch (idx) {
+        switch (idx)
+        {
             case 0: // Screenshot button
                 if (this->m_screenshotButtonMode == ButtonOverrideMode::NONE)
                     break;
 
                 eventClear(&screenshot_evt);
 
-                if (!screenshot_down_start_tick) {
-                    screenshot_down_start_tick = armGetSystemTick();
+                if (!m_isScreenshotPressed.load())
+                {
                     m_isScreenshotPressed = true;
                     Logger::info("Screenshot button clicked");
-                } else {
-                    screenshot_down_start_tick    = 0;
+                }
+                else
+                {
                     m_isScreenshotPressed = false;
                     Logger::info("Screenshot button released");
                 }
@@ -794,23 +831,39 @@ void SwitchInputManager::screenshot_button_thread_fn(std::stop_token token) {
             case 1: // Home button
                 if (this->m_homeButtonMode == ButtonOverrideMode::NONE)
                     break;
-            
+
                 eventClear(&home_evt);
 
-                if (!home_down_start_tick) {
-                    home_down_start_tick = armGetSystemTick();
+                if (!m_isHomePressed.load())
+                {
                     m_isHomePressed = true;
                     Logger::info("Home button clicked");
-                } else {
-                    home_down_start_tick    = 0;
+                }
+                else
+                {
                     m_isHomePressed = false;
                     Logger::info("Home button released");
                 }
                 break;
+#ifdef __SWITCH2__
+            case 2: // Chat (C) button
+                if (this->m_chatButtonMode == ButtonOverrideMode::NONE)
+                    break;
+                eventClear(&chat_evt);
+                m_isChatPressed = !m_isChatPressed.load();
+                Logger::info("SWITCH2_CHAT_BUTTON: pressed={} mode={}", m_isChatPressed.load(),
+                    static_cast<int>(m_chatButtonMode.load()));
+                break;
+#endif
             default:
                 break;
         }
     }
+    m_isScreenshotPressed = false;
+    m_isHomePressed       = false;
+#ifdef __SWITCH2__
+    m_isChatPressed = false;
+#endif
 }
 
 } // namespace brls

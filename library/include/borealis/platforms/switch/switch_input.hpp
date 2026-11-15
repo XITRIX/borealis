@@ -22,6 +22,7 @@
 
 #include <stop_token>
 #include <thread>
+#include <atomic>
 #include <borealis/core/input.hpp>
 #include <borealis/platforms/switch/switch_mouse.hpp>
 
@@ -71,29 +72,54 @@ class SwitchInputManager : public InputManager
     /*
     * It will not report about screenshot button state, if screenshotButtonOverrideMode equals NONE
     */
-    bool isScreenshotButtonPressed() { return m_isScreenshotPressed; }
+    bool isScreenshotButtonPressed() { return m_screenshotButtonMode != ButtonOverrideMode::NONE && m_isScreenshotPressed; }
 
     /*
-    * It will not report about home button state, if homeButtonOverrideMode equals NONE
-    */
-    bool isHomeButtonPressed() { return m_isHomePressed; }
+     * It will not report about home button state, if homeButtonOverrideMode equals NONE
+     */
+    bool isHomeButtonPressed() { return m_homeButtonMode != ButtonOverrideMode::NONE && m_isHomePressed; }
 
     ButtonOverrideMode screenshotButtonOverrideMode() { return m_screenshotButtonMode; }
-    void setScreenshotButtonOverrideMode(ButtonOverrideMode value) { m_screenshotButtonMode = value; }
+    void setScreenshotButtonOverrideMode(ButtonOverrideMode value)
+    {
+        m_screenshotButtonMode = value;
+        if (value == ButtonOverrideMode::NONE)
+            m_isScreenshotPressed = false;
+    }
 
     ButtonOverrideMode homeButtonOverrideMode() { return m_homeButtonMode; }
-    void setHomeButtonOverrideMode(ButtonOverrideMode value) { m_homeButtonMode = value; }
+    void setHomeButtonOverrideMode(ButtonOverrideMode value)
+    {
+        m_homeButtonMode = value;
+        if (value == ButtonOverrideMode::NONE)
+            m_isHomePressed = false;
+    }
+
+#ifdef __SWITCH2__
+    bool isChatButtonPressed() { return m_chatButtonMode != ButtonOverrideMode::NONE && m_isChatPressed; }
+    ButtonOverrideMode chatButtonOverrideMode() { return m_chatButtonMode; }
+    void setChatButtonOverrideMode(ButtonOverrideMode value)
+    {
+        m_chatButtonMode = value;
+        if (value == ButtonOverrideMode::NONE)
+            m_isChatPressed = false;
+    }
+#endif
 
   private:
-    void screenshot_button_thread_fn(std::stop_token token);
-    std::jthread screenshot_button_thread;
+    void system_button_thread_fn(std::stop_token token);
+    std::jthread system_button_thread;
 
-    ButtonOverrideMode m_screenshotButtonMode = ButtonOverrideMode::NONE;
-    ButtonOverrideMode m_homeButtonMode = ButtonOverrideMode::NONE;
+    std::atomic<ButtonOverrideMode> m_screenshotButtonMode = ButtonOverrideMode::NONE;
+    std::atomic<ButtonOverrideMode> m_homeButtonMode       = ButtonOverrideMode::NONE;
 
   private:
-    bool m_isScreenshotPressed = false;
-    bool m_isHomePressed = false;
+    std::atomic<bool> m_isScreenshotPressed = false;
+    std::atomic<bool> m_isHomePressed       = false;
+#ifdef __SWITCH2__
+    std::atomic<ButtonOverrideMode> m_chatButtonMode = ButtonOverrideMode::NONE;
+    std::atomic<bool> m_isChatPressed                = false;
+#endif
 
     bool cursorInited = false;
     int cursorWidth, cursorHeight;

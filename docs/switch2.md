@@ -28,6 +28,17 @@ Joy-Con movement defaults to two thirds of the native delta. Fractional movement
 is preserved; `setJoyConMouseCursorSpeed` applies an application's speed setting
 to the UI cursor without applying it again to relative streaming events.
 
+The Switch 2 C (Chat) button uses `hid:sys` command 171 to acquire its event,
+with the same PID, applet-resource ID and copied-handle ABI as Home/Capture.
+The command identification is recorded in the
+[IHidSystemServer implementation](https://github.com/vexcited/fefw/blob/c57bc31f85bb67a322b816ceeb53d4027fd50b3a/src/nn/hid/detail/hid_server_proxy.cpp).
+`switch_chat_button.hpp` supplies the wrapper missing from the pinned libounce
+SDK. `SwitchInputManager` exposes Chat press state and override modes on Switch 2.
+It follows the existing Home/Capture event-clearing interception mechanism;
+`NONE` leaves normal system handling enabled. Acquiring Chat is optional, and
+failure keeps the Home/Capture worker running. Shared modes and button states
+are atomic, and disabling an override clears its held state.
+
 Applications drawing video or other custom Vulkan content can use
 `brls::Switch2VulkanContext::current()` from
 `borealis/platforms/switch/switch2_vulkan.hpp`. Its command buffer is inside the
