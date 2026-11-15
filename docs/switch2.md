@@ -18,6 +18,16 @@ The backend follows libounce's native output size, including TV-resolution
 changes, and requests the platform's 120 Hz handheld / 60 Hz docked policy.
 Physical dock/TV mode switching still needs device testing.
 
+The native input backend accepts either Joy-Con 2 of the primary controller as
+a mouse, alongside USB mice. L/R clicks, ZL/ZR right-clicks, pressing the stick
+middle-clicks, and the stick scrolls. Movement is read once per input loop through
+libounce's `PadPointer`; applications receive the same mouse state and events
+as USB input. Pointer coordinates follow the UI scale in handheld and docked modes.
+An unavailable Joy-Con pointer service leaves USB input usable.
+Joy-Con movement defaults to two thirds of the native delta. Fractional movement
+is preserved; `setJoyConMouseCursorSpeed` applies an application's speed setting
+to the UI cursor without applying it again to relative streaming events.
+
 Applications drawing video or other custom Vulkan content can use
 `brls::Switch2VulkanContext::current()` from
 `borealis/platforms/switch/switch2_vulkan.hpp`. Its command buffer is inside the

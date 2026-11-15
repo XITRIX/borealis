@@ -23,6 +23,7 @@
 #include <stop_token>
 #include <thread>
 #include <borealis/core/input.hpp>
+#include <borealis/platforms/switch/switch_mouse.hpp>
 
 #define TOUCHES_MAX 10
 
@@ -63,6 +64,9 @@ class SwitchInputManager : public InputManager
     void drawCursor(NVGcontext* vg) override;
 
     void clearVibration(int controller);
+#ifdef __SWITCH2__
+    void setJoyConMouseCursorSpeed(float speed) { this->mouse.setCursorSpeed(speed); }
+#endif
 
     /*
     * It will not report about screenshot button state, if screenshotButtonOverrideMode equals NONE
@@ -104,7 +108,12 @@ class SwitchInputManager : public InputManager
     HidVibrationValue m_vibration_values[GAMEPADS_MAX][2];
     u32 padsStyleSet[GAMEPADS_MAX];
     bool pointerLocked = false;
-    HidMouseState currentMouseState;
+    SwitchMouse mouse;
+    SwitchMouseState currentMouseState = { };
+#ifdef __SWITCH2__
+    bool joyConMotionLogged = false;
+    bool joyConScrollLogged = false;
+#endif
     HidSixAxisSensorHandle m_six_axis_sensor_handle[4]; // All for player 1, player 2 not supported
 
     std::vector<bool> m_hid_keyboard_state;

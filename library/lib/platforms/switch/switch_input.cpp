@@ -127,7 +127,15 @@ SwitchInputManager::SwitchInputManager()
         clearVibration(i);
     }
 
-    hidInitializeMouse();
+    const Result mouseResult = this->mouse.initialize();
+#ifdef __SWITCH2__
+    if (R_FAILED(mouseResult))
+        Logger::warning("SWITCH2_JOYCON_MOUSE: initialization failed rc=0x{:x}; USB mouse remains available", mouseResult);
+    else
+        Logger::info("SWITCH2_JOYCON_MOUSE: initialized; L/R=left ZL/ZR=right stick=middle");
+#else
+    (void)mouseResult;
+#endif
     hidInitializeKeyboard();
     hidInitializeKeyboardMap();
 
@@ -253,6 +261,15 @@ void SwitchInputManager::updateControllerStateInner(ControllerState* state, PadS
 {
     padUpdate(pad);
     uint64_t keysDown = padGetButtons(pad);
+#ifdef __SWITCH2__
+    const auto mouseSide = this->mouse.mouseSide(pad);
+    if (mouseSide == PadPointerSide_Left)
+        keysDown &= ~(HidNpadButton_L | HidNpadButton_ZL | HidNpadButton_StickL
+            | HidNpadButton_StickLLeft | HidNpadButton_StickLRight | HidNpadButton_StickLUp | HidNpadButton_StickLDown);
+    else if (mouseSide == PadPointerSide_Right)
+        keysDown &= ~(HidNpadButton_R | HidNpadButton_ZR | HidNpadButton_StickR
+            | HidNpadButton_StickRLeft | HidNpadButton_StickRRight | HidNpadButton_StickRUp | HidNpadButton_StickRDown);
+#endif
 
     bool full = pad->style_set & HidNpadStyleSet_NpadFullCtrl;
 
@@ -272,6 +289,12 @@ void SwitchInputManager::updateControllerStateInner(ControllerState* state, PadS
 
     HidAnalogStickState analog_stick_l = padGetStickPos(pad, 0);
     HidAnalogStickState analog_stick_r = padGetStickPos(pad, 1);
+#ifdef __SWITCH2__
+    if (mouseSide == PadPointerSide_Left)
+        analog_stick_l = {};
+    else if (mouseSide == PadPointerSide_Right)
+        analog_stick_r = {};
+#endif
 
     if (full)
     {
@@ -394,11 +417,19 @@ void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lo
 
 void SwitchInputManager::updateMouseStates(RawMouseState* state)
 {
+    *state          = { };
+    state->position = lastCursorPosition;
     if (currentMouseState.attributes & HidMouseAttribute_IsConnected)
     {
-        state->position     = Point(currentMouseState.x, currentMouseState.y);
+#ifdef __SWITCH2__
+        state->position = Point(
+            switchTouchCoordinate(currentMouseState.x, SwitchMouse::WIDTH, Application::windowWidth, Application::windowScale),
+            switchTouchCoordinate(currentMouseState.y, SwitchMouse::HEIGHT, Application::windowHeight, Application::windowScale));
+#else
+        state->position = Point(currentMouseState.x, currentMouseState.y);
+#endif
         state->offset       = Point(currentMouseState.delta_x, currentMouseState.delta_y);
-        state->scroll       = Point(0, currentMouseState.wheel_delta_x);
+        state->scroll       = Point(currentMouseState.wheel_delta_x, currentMouseState.wheel_delta_y);
         state->leftButton   = currentMouseState.buttons & HidMouseButton_Left;
         state->middleButton = currentMouseState.buttons & HidMouseButton_Middle;
         state->rightButton  = currentMouseState.buttons & HidMouseButton_Right;
@@ -416,7 +447,23 @@ void SwitchInputManager::runloopStart()
 
 void SwitchInputManager::upToDateMouseState()
 {
-    hidGetMouseStates(&currentMouseState, 1);
+    this->currentMouseState = this->mouse.update();
+#ifdef __SWITCH2__
+    const auto& pointer = this->mouse.joyCon();
+    if (!this->joyConMotionLogged && (pointer.delta_x || pointer.delta_y))
+    {
+        Logger::info("SWITCH2_JOYCON_MOUSE: first motion side={} dx={} dy={}", static_cast<int>(pointer.side), pointer.delta_x, pointer.delta_y);
+        this->joyConMotionLogged = true;
+    }
+    if (pointer.buttons_cur != pointer.buttons_old)
+        Logger::info("SWITCH2_JOYCON_MOUSE: buttons=0x{:x} previous=0x{:x}", pointer.buttons_cur, pointer.buttons_old);
+    if (!this->joyConScrollLogged && pointer.wheel_delta_y)
+    {
+        Logger::info("SWITCH2_JOYCON_MOUSE: first scroll raw={} wheelClicks={:.4f}",
+            pointer.wheel_delta_y, pointer.wheel_delta_y / SwitchMouse::JOYCON_SCROLL_UNITS_PER_CLICK);
+        this->joyConScrollLogged = true;
+    }
+#endif
 }
 
 void SwitchInputManager::handleMouse()
@@ -424,7 +471,7 @@ void SwitchInputManager::handleMouse()
     if (currentMouseState.attributes & HidMouseAttribute_IsConnected)
     {
         getMouseCusorOffsetChanged()->fire(Point(currentMouseState.delta_x, currentMouseState.delta_y));
-        getMouseScrollOffsetChanged()->fire(Point(currentMouseState.wheel_delta_y, currentMouseState.wheel_delta_x));
+        getMouseScrollOffsetChanged()->fire(Point(currentMouseState.wheel_delta_x, currentMouseState.wheel_delta_y));
     }
 }
 
