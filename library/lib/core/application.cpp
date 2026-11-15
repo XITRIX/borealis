@@ -942,6 +942,7 @@ bool Application::popActivity(TransitionAnimation animation, std::function<void(
     Application::blockInputs();
 
     Activity* last = Application::activitiesStack[Application::activitiesStack.size() - 1];
+    const bool restoreAppearance = !last->isTranslucent();
     last->willDisappear(true);
 
     last->setInFadeAnimation(true);
@@ -975,6 +976,12 @@ bool Application::popActivity(TransitionAnimation animation, std::function<void(
 
         Application::focusStack.pop_back();
     }
+
+    // A resumed view may rebuild its children. Restore the saved focus first,
+    // so willAppear can safely replace it rather than leaving a stale target.
+    // Translucent dialogs never obscured the view and must not reload it.
+    if (toShow && restoreAppearance)
+        toShow->willAppear(false);
 
     // Hide animation (and show previous activity, if any)
     last->hide([last, cb, free]()
@@ -1021,6 +1028,8 @@ void Application::pushActivity(Activity* activity, TransitionAnimation animation
     if (!Application::activitiesStack.empty())
     {
         Activity* last = Application::activitiesStack[Application::activitiesStack.size() - 1];
+        if (!activity->isTranslucent())
+            last->willDisappear(false);
         last->onPause();
     }
 
