@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <switch.h>
 
 #include <borealis/platforms/switch/half_joycon_mapping.hpp>
@@ -33,12 +34,12 @@ inline void applyHalfJoyConMapping(ControllerState* state, const HalfJoyConMappi
     for (int i = 0; i < BUTTON_NAV_UP; ++i)
         state->buttons[i] = false;
     const auto masks = halfJoyConButtonMasks(side);
-    for (size_t i = 0; i < mapping.size(); ++i)
+    for (std::size_t i = 0; i < mapping.size(); ++i)
     {
         bool pressed = (buttons & masks[i]) != 0;
-        if (i == static_cast<size_t>(HalfJoyConButton::SYSTEM))
+        if (i == static_cast<std::size_t>(HalfJoyConButton::SYSTEM))
             pressed = systemPressed;
-        if (i == static_cast<size_t>(HalfJoyConButton::CHAT))
+        if (i == static_cast<std::size_t>(HalfJoyConButton::CHAT))
         {
 #ifdef __SWITCH2__
             pressed = side == HalfJoyConSide::RIGHT && chatPressed;
