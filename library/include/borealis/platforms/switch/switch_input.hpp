@@ -148,10 +148,9 @@ class SwitchInputManager : public InputManager
     Point lastCursorPosition;
     PadState padStateHandheld;
     HidVibrationDeviceHandle m_vibration_device_handheld[2];
-    HidVibrationValue m_vibration_values_handheld[2];
     PadState padsState[GAMEPADS_MAX];
     HidVibrationDeviceHandle m_vibration_device_handles[GAMEPADS_MAX][2];
-    HidVibrationValue m_vibration_values[GAMEPADS_MAX][2];
+    int m_vibration_device_counts[GAMEPADS_MAX] = { };
     u32 padsStyleSet[GAMEPADS_MAX];
     bool pointerLocked = false;
     SwitchMouse mouse;
@@ -174,10 +173,8 @@ class SwitchInputManager : public InputManager
     void upToDateMouseState();
     void hidInitializeKeyboardMap();
     void updateControllerStateInner(ControllerState* state, PadState* pad);
-    void sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2],
+    void sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], int count,
         unsigned short lowFreqMotor, unsigned short highFreqMotor);
-    void sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2],
-        unsigned short lowFreqMotor, unsigned short highFreqMotor, unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor);
     void sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor, 
         unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor);
 
