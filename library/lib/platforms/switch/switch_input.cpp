@@ -547,12 +547,14 @@ void SwitchInputManager::handleControllerSensors()
             hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[3], &sixaxis, 1);
     }
 
-    auto accelState = SensorEvent{
+    // HID reports acceleration in G, SensorEvent carries m/s² as SDL does.
+    const float gravity = 9.80665f;
+    auto accelState     = SensorEvent{
         0,
         SensorEventType::ACCEL,
-        { -sixaxis.acceleration.x,
-          -sixaxis.acceleration.z,
-          sixaxis.acceleration.y
+        { -sixaxis.acceleration.x * gravity,
+          -sixaxis.acceleration.z * gravity,
+          sixaxis.acceleration.y * gravity
         },
         0
     };
