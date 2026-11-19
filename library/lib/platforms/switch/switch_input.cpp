@@ -144,15 +144,6 @@ SwitchInputManager::SwitchInputManager()
     hidInitializeKeyboardMap();
 
     m_hid_keyboard_state.assign(256, false);
-
-    // It's necessary to initialize these separately as they all have different handle values
-    hidGetSixAxisSensorHandles(&this->m_six_axis_sensor_handle[0], 1, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
-    hidGetSixAxisSensorHandles(&this->m_six_axis_sensor_handle[1], 1, HidNpadIdType_No1, HidNpadStyleTag_NpadFullKey);
-    hidGetSixAxisSensorHandles(&this->m_six_axis_sensor_handle[2], 2, HidNpadIdType_No1, HidNpadStyleTag_NpadJoyDual);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[0]);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[1]);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[2]);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[3]);
 }
 
 SwitchInputManager::~SwitchInputManager()
@@ -168,11 +159,8 @@ SwitchInputManager::~SwitchInputManager()
         this->cursorTexture = 0;
     }
 
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[0]);
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[1]);
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[2]);
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[3]);
-
+    for (auto& motion : motions)
+        stopMotion(motion);
 }
 
 void SwitchInputManager::clearVibration(int controller)
@@ -224,6 +212,21 @@ void SwitchInputManager::updateUnifiedControllerState(ControllerState* state)
         state->buttons[BUTTON_A] |= getKeyboardKeyState(BRLS_KBD_KEY_ENTER);
         state->buttons[BUTTON_B] |= getKeyboardKeyState(BRLS_KBD_KEY_ESCAPE);
     }
+}
+
+static u32 controllerStyle(u32 styleSet)
+{
+    static const u32 styles[] = {
+        HidNpadStyleTag_NpadFullKey,
+        HidNpadStyleTag_NpadHandheld,
+        HidNpadStyleTag_NpadJoyDual,
+        HidNpadStyleTag_NpadJoyRight,
+        HidNpadStyleTag_NpadJoyLeft,
+    };
+    for (u32 style : styles)
+        if (styleSet & style)
+            return style;
+    return 0;
 }
 
 // A player keeps its controller until that controller disconnects, so the
@@ -585,47 +588,80 @@ void SwitchInputManager::handleKeyboard()
     }
 }
 
-void SwitchInputManager::handleControllerSensors()
+void SwitchInputManager::stopMotion(Motion& motion)
 {
-    HidSixAxisSensorState sixaxis = { 0 };
+    for (int i = 0; i < motion.count; i++)
+        hidStopSixAxisSensor(motion.handles[i]);
+    motion.count = 0;
+    motion.style = 0;
+}
 
-    uint64_t style_set = padGetStyleSet(&padsState[0]);
-    if (padStateHandheld.active_handheld)
-        hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[0], &sixaxis, 1);
-    else if (style_set & HidNpadStyleTag_NpadFullKey)
-        hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[1], &sixaxis, 1);
-    else if (style_set & HidNpadStyleTag_NpadJoyDual)
+// Sensor handles depend on the controller's style, so they are made again
+// whenever it changes. A Joy-Con pair has one sensor per Joy-Con.
+bool SwitchInputManager::readMotion(int source, HidSixAxisSensorState* state)
+{
+    Motion& motion         = motions[source];
+    const PadState* pad    = source == HANDHELD_SOURCE ? &padStateHandheld : &padsState[source];
+    const u32 style        = controllerStyle(pad->style_set);
+    const HidNpadIdType id = source == HANDHELD_SOURCE ? HidNpadIdType_Handheld : (HidNpadIdType)source;
+    if (style != motion.style)
     {
-        // For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
-        u64 attrib = padGetAttributes(&padsState[0]);
-        if (attrib & HidNpadAttribute_IsLeftConnected)
-            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[2], &sixaxis, 1);
-        else if (attrib & HidNpadAttribute_IsRightConnected)
-            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[3], &sixaxis, 1);
+        stopMotion(motion);
+        if (!style)
+            return false;
+        const int count = style == HidNpadStyleTag_NpadJoyDual ? 2 : 1;
+        if (R_FAILED(hidGetSixAxisSensorHandles(motion.handles, count, id, (HidNpadStyleTag)style)))
+            return false;
+        for (int i = 0; i < count; i++)
+            hidStartSixAxisSensor(motion.handles[i]);
+        motion.count = count;
+        motion.style = style;
     }
 
-    // HID reports acceleration in G, SensorEvent carries m/s² as SDL does.
-    const float gravity = 9.80665f;
-    auto accelState     = SensorEvent{
-        0,
-        SensorEventType::ACCEL,
-        { -sixaxis.acceleration.x * gravity,
-          -sixaxis.acceleration.z * gravity,
-          sixaxis.acceleration.y * gravity
-        },
-        0
-    };
-    auto gyroState = SensorEvent{
-        0,
-        SensorEventType::GYRO,
-        { static_cast<float>(sixaxis.angular_velocity.x * 2.0f * M_PI),
-          static_cast<float>(sixaxis.angular_velocity.z * 2.0f * M_PI),
-          static_cast<float>(-sixaxis.angular_velocity.y * 2.0f * M_PI)
-        },
-        0 };
-    getControllerSensorStateChanged()->fire(accelState);
-    getControllerSensorStateChanged()->fire(gyroState);
-    Application::setActiveEvent(true);
+    // A pair reports its right Joy-Con, which holds the face buttons, unless
+    // only the left one is there.
+    int sensor = 0;
+    if (style == HidNpadStyleTag_NpadJoyDual)
+        sensor = (padGetAttributes(pad) & HidNpadAttribute_IsRightConnected) ? 1 : 0;
+    return hidGetSixAxisSensorStates(motion.handles[sensor], state, 1) > 0;
+}
+
+void SwitchInputManager::handleControllerSensors()
+{
+    updatePlayers();
+    for (int source = 0; source < (int)motions.size(); source++)
+        if (std::find(players.begin(), players.end(), source) == players.end())
+            stopMotion(motions[source]);
+
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+    {
+        HidSixAxisSensorState sixaxis = { };
+        if (players[player] == NO_SOURCE || !readMotion(players[player], &sixaxis))
+            continue;
+
+        // HID reports acceleration in G, SensorEvent carries m/s² as SDL does.
+        const float gravity = 9.80665f;
+        auto accelState     = SensorEvent{
+            player,
+            SensorEventType::ACCEL,
+            { -sixaxis.acceleration.x * gravity,
+              -sixaxis.acceleration.z * gravity,
+              sixaxis.acceleration.y * gravity
+            },
+            0
+        };
+        auto gyroState = SensorEvent{
+            player,
+            SensorEventType::GYRO,
+            { static_cast<float>(sixaxis.angular_velocity.x * 2.0f * M_PI),
+              static_cast<float>(sixaxis.angular_velocity.z * 2.0f * M_PI),
+              static_cast<float>(-sixaxis.angular_velocity.y * 2.0f * M_PI)
+            },
+            0 };
+        getControllerSensorStateChanged()->fire(accelState);
+        getControllerSensorStateChanged()->fire(gyroState);
+        Application::setActiveEvent(true);
+    }
 }
 
 void SwitchInputManager::setPointerLock(bool lock)

@@ -167,7 +167,14 @@ class SwitchInputManager : public InputManager
     bool joyConMotionLogged = false;
     bool joyConScrollLogged = false;
 #endif
-    HidSixAxisSensorHandle m_six_axis_sensor_handle[4]; // All for player 1, player 2 not supported
+    struct Motion
+    {
+        u32 style = 0;
+        HidSixAxisSensorHandle handles[2];
+        int count = 0;
+    };
+    // Six-axis sensors per source, indexed like the players' sources.
+    std::array<Motion, GAMEPADS_MAX + 1> motions = { };
 
     std::vector<bool> m_hid_keyboard_state;
     std::unordered_map<int, BrlsKeyboardScancode> m_hid_brls_map;
@@ -177,6 +184,8 @@ class SwitchInputManager : public InputManager
     void handleMouse();
     void handleKeyboard();
     void handleControllerSensors();
+    void stopMotion(Motion& motion);
+    bool readMotion(int source, HidSixAxisSensorState* state);
     void upToDateMouseState();
     void hidInitializeKeyboardMap();
     void updateControllerStateInner(ControllerState* state, PadState* pad);
