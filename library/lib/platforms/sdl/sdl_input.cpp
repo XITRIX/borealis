@@ -687,6 +687,7 @@ void SDLInputManager::updateTouchStates(std::vector<RawTouchState>* states)
             state.fingerId   = (int)finger->id;
             state.position.x = Application::contentWidth * finger->x;
             state.position.y = Application::contentHeight * finger->y;
+            state.pressure   = finger->pressure;
             states->push_back(state);
         }
 #if defined(__SDL3__)

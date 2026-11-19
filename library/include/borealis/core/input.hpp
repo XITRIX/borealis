@@ -269,6 +269,9 @@ struct RawTouchState
     int fingerId = 0;
     bool pressed = false;
     Point position;
+    float pressure = 0; // 0 to 1, 0 when the device does not report it
+    Size contactSize;   // contact diameters in position units, 0 when unknown
+    int rotation = -1;  // contact rotation in degrees (0 to 359), -1 when unknown
 };
 
 // Contains touch data automatically filled with current phase by the library
@@ -278,6 +281,9 @@ struct TouchState
     int fingerId     = 0;
     TouchPhase phase = TouchPhase::NONE;
     Point position;
+    float pressure = 0; // 0 to 1, 0 when the device does not report it
+    Size contactSize;   // contact diameters in position units, 0 when unknown
+    int rotation = -1;  // contact rotation in degrees (0 to 359), -1 when unknown
     View* view = nullptr;
 };
 
