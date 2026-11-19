@@ -56,13 +56,15 @@ TouchState InputManager::computeTouchState(RawTouchState currentTouch, TouchStat
 MouseState InputManager::computeMouseState(RawMouseState currentTouch, MouseState lastFrameState)
 {
     MouseState state;
-    state.view         = lastFrameState.view;
-    state.position     = currentTouch.position;
-    state.offset       = currentTouch.offset;
-    state.scroll       = currentTouch.scroll;
-    state.leftButton   = getPhase(lastFrameState.leftButton, currentTouch.leftButton);
-    state.middleButton = getPhase(lastFrameState.middleButton, currentTouch.middleButton);
-    state.rightButton  = getPhase(lastFrameState.rightButton, currentTouch.rightButton);
+    state.view          = lastFrameState.view;
+    state.position      = currentTouch.position;
+    state.offset        = currentTouch.offset;
+    state.scroll        = currentTouch.scroll;
+    state.leftButton    = getPhase(lastFrameState.leftButton, currentTouch.leftButton);
+    state.middleButton  = getPhase(lastFrameState.middleButton, currentTouch.middleButton);
+    state.rightButton   = getPhase(lastFrameState.rightButton, currentTouch.rightButton);
+    state.backButton    = getPhase(lastFrameState.backButton, currentTouch.backButton);
+    state.forwardButton = getPhase(lastFrameState.forwardButton, currentTouch.forwardButton);
     return state;
 }
 
