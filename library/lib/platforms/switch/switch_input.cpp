@@ -506,7 +506,7 @@ void SwitchInputManager::handleKeyboard()
                 keyState.key     = brlsKey;
                 keyState.pressed = is_pressed;
 
-                if (state.modifiers & HidKeyboardModifier_LeftAlt)
+                if (state.modifiers & (HidKeyboardModifier_LeftAlt | HidKeyboardModifier_RightAlt))
                     keyState.mods |= BRLS_KBD_MODIFIER_ALT;
 
                 if (state.modifiers & HidKeyboardModifier_Control)
@@ -627,6 +627,10 @@ static BrlsKeyboardScancode hidKey2BrlsKey(int key)
     {
         return (BrlsKeyboardScancode)(key - KBD_F1 + BRLS_KBD_KEY_F1);
     }
+    if (KBD_F13 <= key && key <= KBD_F24)
+    {
+        return (BrlsKeyboardScancode)(key - KBD_F13 + BRLS_KBD_KEY_F13);
+    }
     if (KBD_KP1 <= key && key <= KBD_KP9)
     {
         return (BrlsKeyboardScancode)(key - KBD_KP1 + BRLS_KBD_KEY_KP_1);
@@ -657,6 +661,7 @@ static BrlsKeyboardScancode hidKey2BrlsKey(int key)
         case KBD_RIGHTBRACE:
             return BRLS_KBD_KEY_RIGHT_BRACKET;
         case KBD_BACKSLASH:
+        case KBD_HASHTILDE:
             return BRLS_KBD_KEY_BACKSLASH;
         case KBD_GRAVE:
             return BRLS_KBD_KEY_GRAVE_ACCENT;
@@ -733,8 +738,9 @@ static BrlsKeyboardScancode hidKey2BrlsKey(int key)
 
         case KBD_102ND:
             return BRLS_KBD_KEY_WORLD_1;
+        case KBD_COMPOSE:
+            return BRLS_KBD_KEY_MENU;
 
-        // case KBD_HASHTILDE: return GLFW_HASHTILDE;
         default:
             return BRLS_KBD_KEY_UNKNOWN;
     }
@@ -750,8 +756,8 @@ void SwitchInputManager::hidInitializeKeyboardMap()
         const auto brlsKey = hidKey2BrlsKey(i);
         if (brlsKey == BRLS_KBD_KEY_UNKNOWN)
             continue;
-        m_hid_brls_map[i]       = brlsKey;
-        m_brls_hid_map[brlsKey] = i;
+        m_hid_brls_map[i] = brlsKey;
+        m_brls_hid_map.try_emplace(brlsKey, i);
     }
 }
 
