@@ -14,6 +14,7 @@
     limitations under the License.
 */
 
+#include <algorithm>
 #include <chrono>
 #include <borealis/core/thread.hpp>
 #include <borealis/core/application.hpp>
@@ -116,6 +117,8 @@ SwitchInputManager::SwitchInputManager()
     hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
     hidSetNpadHandheldActivationMode(HidNpadHandheldActivationMode_Single);
 
+    players.fill(NO_SOURCE);
+
     padInitialize(&this->padStateHandheld, HidNpadIdType_Handheld);
     hidInitializeVibrationDevices(m_vibration_device_handheld, 2, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
     padUpdate(&this->padStateHandheld);
@@ -141,15 +144,6 @@ SwitchInputManager::SwitchInputManager()
     hidInitializeKeyboardMap();
 
     m_hid_keyboard_state.assign(256, false);
-
-    // It's necessary to initialize these separately as they all have different handle values
-    hidGetSixAxisSensorHandles(&this->m_six_axis_sensor_handle[0], 1, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
-    hidGetSixAxisSensorHandles(&this->m_six_axis_sensor_handle[1], 1, HidNpadIdType_No1, HidNpadStyleTag_NpadFullKey);
-    hidGetSixAxisSensorHandles(&this->m_six_axis_sensor_handle[2], 2, HidNpadIdType_No1, HidNpadStyleTag_NpadJoyDual);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[0]);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[1]);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[2]);
-    hidStartSixAxisSensor(this->m_six_axis_sensor_handle[3]);
 }
 
 SwitchInputManager::~SwitchInputManager()
@@ -165,11 +159,8 @@ SwitchInputManager::~SwitchInputManager()
         this->cursorTexture = 0;
     }
 
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[0]);
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[1]);
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[2]);
-    hidStopSixAxisSensor(this->m_six_axis_sensor_handle[3]);
-
+    for (auto& motion : motions)
+        stopMotion(motion);
 }
 
 void SwitchInputManager::clearVibration(int controller)
@@ -223,38 +214,105 @@ void SwitchInputManager::updateUnifiedControllerState(ControllerState* state)
     }
 }
 
-short SwitchInputManager::getControllersConnectedCount()
+static u32 controllerStyle(u32 styleSet)
+{
+    static const u32 styles[] = {
+        HidNpadStyleTag_NpadFullKey,
+        HidNpadStyleTag_NpadHandheld,
+        HidNpadStyleTag_NpadJoyDual,
+        HidNpadStyleTag_NpadJoyRight,
+        HidNpadStyleTag_NpadJoyLeft,
+    };
+    for (u32 style : styles)
+        if (styleSet & style)
+            return style;
+    return 0;
+}
+
+// A player keeps its controller until that controller disconnects, so the
+// others never shift. A new controller takes the lowest free player, in the
+// Switch's order: handheld first, then No1 onwards.
+void SwitchInputManager::updatePlayers()
 {
     padUpdate(&this->padStateHandheld);
-    int extra       = padStateHandheld.active_handheld ? 1 : 0;
-    int controllers = extra;
-    for (int i = 0; i < GAMEPADS_MAX - extra; i++)
-    {
+    for (int i = 0; i < GAMEPADS_MAX; i++)
         padUpdate(&this->padsState[i]);
-        if (padsState[i].style_set == 0)
-            break;
-        controllers++;
+
+    auto connected = [this](int source)
+    {
+        if (source == HANDHELD_SOURCE)
+            return padStateHandheld.active_handheld;
+        return padsState[source].style_set != 0;
+    };
+
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+    {
+        if (players[player] != NO_SOURCE && !connected(players[player]))
+        {
+            Logger::info("Controller {} disconnected", player);
+            players[player] = NO_SOURCE;
+        }
     }
-    return controllers;
+
+    for (int i = 0; i <= GAMEPADS_MAX; i++)
+    {
+        const int source = i == 0 ? HANDHELD_SOURCE : i - 1;
+        if (!connected(source) || std::find(players.begin(), players.end(), source) != players.end())
+            continue;
+        auto free = std::find(players.begin(), players.end(), NO_SOURCE);
+        if (free == players.end())
+            break;
+        *free = source;
+        Logger::info("Controller {} connected ({})", free - players.begin(),
+            source == HANDHELD_SOURCE ? "handheld" : fmt::format("No{}", source + 1));
+    }
+}
+
+PadState* SwitchInputManager::playerPad(int controller)
+{
+    if (controller < 0 || controller >= GAMEPADS_MAX || players[controller] == NO_SOURCE)
+        return nullptr;
+    if (players[controller] == HANDHELD_SOURCE)
+        return &padStateHandheld;
+    return &padsState[players[controller]];
+}
+
+short SwitchInputManager::getControllersConnectedCount()
+{
+    updatePlayers();
+    int count = 0;
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+        if (players[player] != NO_SOURCE)
+            count = player + 1;
+    return count;
+}
+
+unsigned SwitchInputManager::getControllersConnectedMask()
+{
+    updatePlayers();
+    unsigned mask = 0;
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+        if (players[player] != NO_SOURCE)
+            mask |= 1U << player;
+    return mask;
 }
 
 void SwitchInputManager::updateControllerState(ControllerState* state, int controller)
 {
-    padUpdate(&this->padStateHandheld);
-    if (controller == 0 && padStateHandheld.active_handheld)
+    PadState* pad = playerPad(controller);
+    if (!pad)
     {
-        updateControllerStateInner(state, &padStateHandheld);
+        *state = { };
         return;
     }
 
-    int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    PadState* pad       = &this->padsState[localController];
     updateControllerStateInner(state, pad);
 
-    if (padsStyleSet[localController] != pad->style_set)
+    const int source = players[controller];
+    if (source != HANDHELD_SOURCE && padsStyleSet[source] != pad->style_set)
     {
-        padsStyleSet[localController] = pad->style_set;
-        clearVibration(localController);
+        padsStyleSet[source] = pad->style_set;
+        clearVibration(source);
     }
 }
 
@@ -398,28 +456,30 @@ void SwitchInputManager::sendRumbleInternal(HidVibrationDeviceHandle vibration_d
 
 void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor)
 {
-    padUpdate(&this->padStateHandheld);
-    if (controller == 0 && padStateHandheld.active_handheld)
+    if (!playerPad(controller))
+        return;
+    const int source = players[controller];
+    if (source == HANDHELD_SOURCE)
     {
         sendRumbleInternal(m_vibration_device_handheld, m_vibration_values_handheld, lowFreqMotor, highFreqMotor);
         return;
     }
 
-    int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    sendRumbleInternal(m_vibration_device_handles[localController], m_vibration_values[localController], lowFreqMotor, highFreqMotor);
+    sendRumbleInternal(m_vibration_device_handles[source], m_vibration_values[source], lowFreqMotor, highFreqMotor);
 }
 
 void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor, unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor)
 {
-    padUpdate(&this->padStateHandheld);
-    if (controller == 0 && padStateHandheld.active_handheld)
+    if (!playerPad(controller))
+        return;
+    const int source = players[controller];
+    if (source == HANDHELD_SOURCE)
     {
         sendRumbleInternal(m_vibration_device_handheld, m_vibration_values_handheld, lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
         return;
     }
 
-    int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    sendRumbleInternal(m_vibration_device_handles[localController], m_vibration_values[localController], lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
+    sendRumbleInternal(m_vibration_device_handles[source], m_vibration_values[source], lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
 }
 
 void SwitchInputManager::updateMouseStates(RawMouseState* state)
@@ -528,45 +588,80 @@ void SwitchInputManager::handleKeyboard()
     }
 }
 
-void SwitchInputManager::handleControllerSensors()
+void SwitchInputManager::stopMotion(Motion& motion)
 {
-    HidSixAxisSensorState sixaxis = { 0 };
+    for (int i = 0; i < motion.count; i++)
+        hidStopSixAxisSensor(motion.handles[i]);
+    motion.count = 0;
+    motion.style = 0;
+}
 
-    uint64_t style_set = padGetStyleSet(&padsState[0]);
-    if (padStateHandheld.active_handheld)
-        hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[0], &sixaxis, 1);
-    else if (style_set & HidNpadStyleTag_NpadFullKey)
-        hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[1], &sixaxis, 1);
-    else if (style_set & HidNpadStyleTag_NpadJoyDual)
+// Sensor handles depend on the controller's style, so they are made again
+// whenever it changes. A Joy-Con pair has one sensor per Joy-Con.
+bool SwitchInputManager::readMotion(int source, HidSixAxisSensorState* state)
+{
+    Motion& motion         = motions[source];
+    const PadState* pad    = source == HANDHELD_SOURCE ? &padStateHandheld : &padsState[source];
+    const u32 style        = controllerStyle(pad->style_set);
+    const HidNpadIdType id = source == HANDHELD_SOURCE ? HidNpadIdType_Handheld : (HidNpadIdType)source;
+    if (style != motion.style)
     {
-        // For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
-        u64 attrib = padGetAttributes(&padsState[0]);
-        if (attrib & HidNpadAttribute_IsLeftConnected)
-            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[2], &sixaxis, 1);
-        else if (attrib & HidNpadAttribute_IsRightConnected)
-            hidGetSixAxisSensorStates(this->m_six_axis_sensor_handle[3], &sixaxis, 1);
+        stopMotion(motion);
+        if (!style)
+            return false;
+        const int count = style == HidNpadStyleTag_NpadJoyDual ? 2 : 1;
+        if (R_FAILED(hidGetSixAxisSensorHandles(motion.handles, count, id, (HidNpadStyleTag)style)))
+            return false;
+        for (int i = 0; i < count; i++)
+            hidStartSixAxisSensor(motion.handles[i]);
+        motion.count = count;
+        motion.style = style;
     }
 
-    auto accelState = SensorEvent{
-        0,
-        SensorEventType::ACCEL,
-        { -sixaxis.acceleration.x,
-          -sixaxis.acceleration.z,
-          sixaxis.acceleration.y
-        },
-        0
-    };
-    auto gyroState = SensorEvent{
-        0,
-        SensorEventType::GYRO,
-        { static_cast<float>(sixaxis.angular_velocity.x * 2.0f * M_PI),
-          static_cast<float>(sixaxis.angular_velocity.z * 2.0f * M_PI),
-          static_cast<float>(-sixaxis.angular_velocity.y * 2.0f * M_PI)
-        },
-        0 };
-    getControllerSensorStateChanged()->fire(accelState);
-    getControllerSensorStateChanged()->fire(gyroState);
-    Application::setActiveEvent(true);
+    // A pair reports its right Joy-Con, which holds the face buttons, unless
+    // only the left one is there.
+    int sensor = 0;
+    if (style == HidNpadStyleTag_NpadJoyDual)
+        sensor = (padGetAttributes(pad) & HidNpadAttribute_IsRightConnected) ? 1 : 0;
+    return hidGetSixAxisSensorStates(motion.handles[sensor], state, 1) > 0;
+}
+
+void SwitchInputManager::handleControllerSensors()
+{
+    updatePlayers();
+    for (int source = 0; source < (int)motions.size(); source++)
+        if (std::find(players.begin(), players.end(), source) == players.end())
+            stopMotion(motions[source]);
+
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+    {
+        HidSixAxisSensorState sixaxis = { };
+        if (players[player] == NO_SOURCE || !readMotion(players[player], &sixaxis))
+            continue;
+
+        // HID reports acceleration in G, SensorEvent carries m/s² as SDL does.
+        const float gravity = 9.80665f;
+        auto accelState     = SensorEvent{
+            player,
+            SensorEventType::ACCEL,
+            { -sixaxis.acceleration.x * gravity,
+              -sixaxis.acceleration.z * gravity,
+              sixaxis.acceleration.y * gravity
+            },
+            0
+        };
+        auto gyroState = SensorEvent{
+            player,
+            SensorEventType::GYRO,
+            { static_cast<float>(sixaxis.angular_velocity.x * 2.0f * M_PI),
+              static_cast<float>(sixaxis.angular_velocity.z * 2.0f * M_PI),
+              static_cast<float>(-sixaxis.angular_velocity.y * 2.0f * M_PI)
+            },
+            0 };
+        getControllerSensorStateChanged()->fire(accelState);
+        getControllerSensorStateChanged()->fire(gyroState);
+        Application::setActiveEvent(true);
+    }
 }
 
 void SwitchInputManager::setPointerLock(bool lock)
@@ -786,13 +881,10 @@ bool SwitchInputManager::isHalfJoyConMappingActive(int controller) const
 {
     if (!halfMappingEnabled || controller < 0 || controller >= GAMEPADS_MAX)
         return false;
-    if (padStateHandheld.active_handheld)
-    {
-        if (controller == 0)
-            return false;
-        --controller;
-    }
-    return halfJoyConSide(padsState[controller].style_set) != HalfJoyConSide::NONE;
+    const int source = players[controller];
+    if (source == NO_SOURCE || source == HANDHELD_SOURCE)
+        return false;
+    return halfJoyConSide(padsState[source].style_set) != HalfJoyConSide::NONE;
 }
 
 void SwitchInputManager::refreshHalfJoyConClaims()
