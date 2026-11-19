@@ -47,6 +47,8 @@ class SwitchInputManager : public InputManager
 
     short getControllersConnectedCount() override;
 
+    unsigned getControllersConnectedMask() override;
+
     void updateUnifiedControllerState(ControllerState* state) override;
 
     void updateControllerState(ControllerState* state, int controller) override;
@@ -150,6 +152,10 @@ class SwitchInputManager : public InputManager
     HidVibrationDeviceHandle m_vibration_device_handheld[2];
     HidVibrationValue m_vibration_values_handheld[2];
     PadState padsState[GAMEPADS_MAX];
+    // Source of each player: HANDHELD_SOURCE, an index into padsState, or NO_SOURCE.
+    static constexpr int HANDHELD_SOURCE = GAMEPADS_MAX;
+    static constexpr int NO_SOURCE       = -1;
+    std::array<int, GAMEPADS_MAX> players;
     HidVibrationDeviceHandle m_vibration_device_handles[GAMEPADS_MAX][2];
     HidVibrationValue m_vibration_values[GAMEPADS_MAX][2];
     u32 padsStyleSet[GAMEPADS_MAX];
@@ -174,6 +180,8 @@ class SwitchInputManager : public InputManager
     void upToDateMouseState();
     void hidInitializeKeyboardMap();
     void updateControllerStateInner(ControllerState* state, PadState* pad);
+    void updatePlayers();
+    PadState* playerPad(int controller);
     void sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2],
         unsigned short lowFreqMotor, unsigned short highFreqMotor);
     void sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2],

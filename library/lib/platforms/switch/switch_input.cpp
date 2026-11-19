@@ -14,6 +14,7 @@
     limitations under the License.
 */
 
+#include <algorithm>
 #include <chrono>
 #include <borealis/core/thread.hpp>
 #include <borealis/core/application.hpp>
@@ -115,6 +116,8 @@ SwitchInputManager::SwitchInputManager()
     padConfigureInput(GAMEPADS_MAX, HidNpadStyleSet_NpadStandard);
     hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
     hidSetNpadHandheldActivationMode(HidNpadHandheldActivationMode_Single);
+
+    players.fill(NO_SOURCE);
 
     padInitialize(&this->padStateHandheld, HidNpadIdType_Handheld);
     hidInitializeVibrationDevices(m_vibration_device_handheld, 2, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
@@ -223,38 +226,90 @@ void SwitchInputManager::updateUnifiedControllerState(ControllerState* state)
     }
 }
 
-short SwitchInputManager::getControllersConnectedCount()
+// A player keeps its controller until that controller disconnects, so the
+// others never shift. A new controller takes the lowest free player, in the
+// Switch's order: handheld first, then No1 onwards.
+void SwitchInputManager::updatePlayers()
 {
     padUpdate(&this->padStateHandheld);
-    int extra       = padStateHandheld.active_handheld ? 1 : 0;
-    int controllers = extra;
-    for (int i = 0; i < GAMEPADS_MAX - extra; i++)
-    {
+    for (int i = 0; i < GAMEPADS_MAX; i++)
         padUpdate(&this->padsState[i]);
-        if (padsState[i].style_set == 0)
-            break;
-        controllers++;
+
+    auto connected = [this](int source)
+    {
+        if (source == HANDHELD_SOURCE)
+            return padStateHandheld.active_handheld;
+        return padsState[source].style_set != 0;
+    };
+
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+    {
+        if (players[player] != NO_SOURCE && !connected(players[player]))
+        {
+            Logger::info("Controller {} disconnected", player);
+            players[player] = NO_SOURCE;
+        }
     }
-    return controllers;
+
+    for (int i = 0; i <= GAMEPADS_MAX; i++)
+    {
+        const int source = i == 0 ? HANDHELD_SOURCE : i - 1;
+        if (!connected(source) || std::find(players.begin(), players.end(), source) != players.end())
+            continue;
+        auto free = std::find(players.begin(), players.end(), NO_SOURCE);
+        if (free == players.end())
+            break;
+        *free = source;
+        Logger::info("Controller {} connected ({})", free - players.begin(),
+            source == HANDHELD_SOURCE ? "handheld" : fmt::format("No{}", source + 1));
+    }
+}
+
+PadState* SwitchInputManager::playerPad(int controller)
+{
+    if (controller < 0 || controller >= GAMEPADS_MAX || players[controller] == NO_SOURCE)
+        return nullptr;
+    if (players[controller] == HANDHELD_SOURCE)
+        return &padStateHandheld;
+    return &padsState[players[controller]];
+}
+
+short SwitchInputManager::getControllersConnectedCount()
+{
+    updatePlayers();
+    int count = 0;
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+        if (players[player] != NO_SOURCE)
+            count = player + 1;
+    return count;
+}
+
+unsigned SwitchInputManager::getControllersConnectedMask()
+{
+    updatePlayers();
+    unsigned mask = 0;
+    for (int player = 0; player < GAMEPADS_MAX; player++)
+        if (players[player] != NO_SOURCE)
+            mask |= 1U << player;
+    return mask;
 }
 
 void SwitchInputManager::updateControllerState(ControllerState* state, int controller)
 {
-    padUpdate(&this->padStateHandheld);
-    if (controller == 0 && padStateHandheld.active_handheld)
+    PadState* pad = playerPad(controller);
+    if (!pad)
     {
-        updateControllerStateInner(state, &padStateHandheld);
+        *state = { };
         return;
     }
 
-    int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    PadState* pad       = &this->padsState[localController];
     updateControllerStateInner(state, pad);
 
-    if (padsStyleSet[localController] != pad->style_set)
+    const int source = players[controller];
+    if (source != HANDHELD_SOURCE && padsStyleSet[source] != pad->style_set)
     {
-        padsStyleSet[localController] = pad->style_set;
-        clearVibration(localController);
+        padsStyleSet[source] = pad->style_set;
+        clearVibration(source);
     }
 }
 
@@ -398,28 +453,30 @@ void SwitchInputManager::sendRumbleInternal(HidVibrationDeviceHandle vibration_d
 
 void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor)
 {
-    padUpdate(&this->padStateHandheld);
-    if (controller == 0 && padStateHandheld.active_handheld)
+    if (!playerPad(controller))
+        return;
+    const int source = players[controller];
+    if (source == HANDHELD_SOURCE)
     {
         sendRumbleInternal(m_vibration_device_handheld, m_vibration_values_handheld, lowFreqMotor, highFreqMotor);
         return;
     }
 
-    int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    sendRumbleInternal(m_vibration_device_handles[localController], m_vibration_values[localController], lowFreqMotor, highFreqMotor);
+    sendRumbleInternal(m_vibration_device_handles[source], m_vibration_values[source], lowFreqMotor, highFreqMotor);
 }
 
 void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor, unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor)
 {
-    padUpdate(&this->padStateHandheld);
-    if (controller == 0 && padStateHandheld.active_handheld)
+    if (!playerPad(controller))
+        return;
+    const int source = players[controller];
+    if (source == HANDHELD_SOURCE)
     {
         sendRumbleInternal(m_vibration_device_handheld, m_vibration_values_handheld, lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
         return;
     }
 
-    int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    sendRumbleInternal(m_vibration_device_handles[localController], m_vibration_values[localController], lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
+    sendRumbleInternal(m_vibration_device_handles[source], m_vibration_values[source], lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
 }
 
 void SwitchInputManager::updateMouseStates(RawMouseState* state)
@@ -786,13 +843,10 @@ bool SwitchInputManager::isHalfJoyConMappingActive(int controller) const
 {
     if (!halfMappingEnabled || controller < 0 || controller >= GAMEPADS_MAX)
         return false;
-    if (padStateHandheld.active_handheld)
-    {
-        if (controller == 0)
-            return false;
-        --controller;
-    }
-    return halfJoyConSide(padsState[controller].style_set) != HalfJoyConSide::NONE;
+    const int source = players[controller];
+    if (source == NO_SOURCE || source == HANDHELD_SOURCE)
+        return false;
+    return halfJoyConSide(padsState[source].style_set) != HalfJoyConSide::NONE;
 }
 
 void SwitchInputManager::refreshHalfJoyConClaims()

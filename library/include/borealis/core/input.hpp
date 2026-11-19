@@ -310,7 +310,19 @@ class InputManager
   public:
     virtual ~InputManager() = default;
 
+    /**
+     * Number of controller indices to poll. A platform that keeps players on
+     * their controllers can leave an index below it empty.
+     */
     virtual short getControllersConnectedCount() = 0;
+
+    /**
+     * Bit N is set when controller N is connected.
+     */
+    virtual unsigned getControllersConnectedMask()
+    {
+        return (1U << getControllersConnectedCount()) - 1;
+    }
 
     virtual void updateUnifiedControllerState(ControllerState* state) = 0;
     /**
