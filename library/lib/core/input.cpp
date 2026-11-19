@@ -47,9 +47,19 @@ TouchState InputManager::computeTouchState(RawTouchState currentTouch, TouchStat
     state.view     = lastFrameState.view;
     state.phase    = getPhase(lastFrameState.phase, currentTouch.pressed);
     if (state.phase == TouchPhase::END)
-        state.position = lastFrameState.position;
+    {
+        state.position    = lastFrameState.position;
+        state.pressure    = lastFrameState.pressure;
+        state.contactSize = lastFrameState.contactSize;
+        state.rotation    = lastFrameState.rotation;
+    }
     else
-        state.position = currentTouch.position;
+    {
+        state.position    = currentTouch.position;
+        state.pressure    = currentTouch.pressure;
+        state.contactSize = currentTouch.contactSize;
+        state.rotation    = currentTouch.rotation;
+    }
     return state;
 }
 

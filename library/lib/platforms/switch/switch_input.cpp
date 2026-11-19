@@ -347,18 +347,29 @@ void SwitchInputManager::updateTouchStates(std::vector<RawTouchState>* states)
     {
         for (int i = 0; i < hidState.count; i++)
         {
+            const HidTouchState& touch = hidState.touches[i];
             RawTouchState state;
             state.pressed    = true;
-            state.fingerId   = hidState.touches[i].finger_id;
+            state.fingerId   = touch.finger_id;
 #ifdef __SWITCH2__
-            state.position.x = switchTouchCoordinate(hidState.touches[i].x, 1280.0f,
+            state.position.x = switchTouchCoordinate(touch.x, 1280.0f,
                 Application::windowWidth, Application::windowScale);
-            state.position.y = switchTouchCoordinate(hidState.touches[i].y, 720.0f,
+            state.position.y = switchTouchCoordinate(touch.y, 720.0f,
+                Application::windowHeight, Application::windowScale);
+            state.contactSize.width  = switchTouchCoordinate(touch.diameter_x, 1280.0f,
+                Application::windowWidth, Application::windowScale);
+            state.contactSize.height = switchTouchCoordinate(touch.diameter_y, 720.0f,
                 Application::windowHeight, Application::windowScale);
 #else
-            state.position.x = hidState.touches[i].x / Application::windowScale;
-            state.position.y = hidState.touches[i].y / Application::windowScale;
+            state.position.x = touch.x / Application::windowScale;
+            state.position.y = touch.y / Application::windowScale;
+            state.contactSize.width  = touch.diameter_x / Application::windowScale;
+            state.contactSize.height = touch.diameter_y / Application::windowScale;
 #endif
+            // The panel senses contact, not force.
+            state.pressure = 1.0f;
+            if (touch.diameter_x || touch.diameter_y)
+                state.rotation = (static_cast<int>(touch.rotation_angle) % 360 + 360) % 360;
             states->push_back(state);
         }
     }
