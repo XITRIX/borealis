@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <atomic>
 #include <borealis/core/frame_presentation.hpp>
 #include <borealis/core/frame_resources.hpp>
 #include <condition_variable>
@@ -39,6 +40,8 @@ class Switch2VulkanContext
     bool importBuffer(void* address, VkDeviceSize size, Switch2VkBuffer& result, bool texelViews = true);
     void destroyBuffer(Switch2VkBuffer& buffer);
     void setFrameDriven(bool enabled);
+    void setDockedHighRefresh(bool enabled);
+    void applyRefreshRate(bool force = false);
     void videoFrameChanged(bool changed) { newVideoFrame |= changed; }
     void videoSource(bool direct, bool texel);
     void wakeFrame();
@@ -91,6 +94,8 @@ class Switch2VulkanContext
     uint32_t imageIndex = 0;
     bool resizePending  = false;
     bool imageAcquired  = false;
+    std::atomic<bool> dockedHighRefresh { false };
+    bool highRefresh = false;
     bool videoDrawn = false, newVideoFrame = false, directVideo = false, texelVideo = false;
     uint32_t maxTexelElements = 0;
     FramePresentation presentation;

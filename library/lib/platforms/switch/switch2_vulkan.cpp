@@ -49,7 +49,7 @@ void Switch2VulkanContext::check(VkResult rc, const char* operation)
 Switch2VulkanContext::Switch2VulkanContext()
 {
     nwindowSetModeDimensions(nwindowGetDefault(), 0, 0, 0, 0);
-    nwindowSetFrameRates(nwindowGetDefault(), 120, 60, true);
+    applyRefreshRate(true);
     const char* instanceExtensions[] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_NN_VI_SURFACE_EXTENSION_NAME };
     VkApplicationInfo app { VK_STRUCTURE_TYPE_APPLICATION_INFO };
     app.pApplicationName = "Borealis";
@@ -284,6 +284,31 @@ void Switch2VulkanContext::setFrameDriven(bool enabled)
     brls::Logger::info("SWITCH2_VULKAN_PRESENT: frameDriven={} keepaliveMs=34 inputLoop=independent", enabled);
 }
 
+void Switch2VulkanContext::setDockedHighRefresh(bool enabled)
+{
+    dockedHighRefresh = enabled;
+}
+
+void Switch2VulkanContext::applyRefreshRate(bool force)
+{
+    bool docked = appletGetOperationMode() == AppletOperationMode_Console;
+    bool wanted = !docked || dockedHighRefresh;
+    if (wanted == highRefresh && !force)
+        return;
+    highRefresh = wanted;
+    NWindow* window = nwindowGetDefault();
+    if (wanted)
+    {
+        nwindowSetFrameRates(window, 120, 60, true);
+    }
+    else
+    {
+        nwindowSetSwapInterval(window, 1);
+        nwindowSetVrr(window, false);
+    }
+    brls::Logger::info("SWITCH2_VULKAN: 120 Hz {} docked={}", wanted ? "requested" : "withdrawn", docked);
+}
+
 void Switch2VulkanContext::wakeFrame()
 {
     std::lock_guard<std::mutex> lock(wakeMutex);
@@ -492,6 +517,7 @@ void Switch2VulkanContext::begin()
         observedGeneration = wakeGeneration;
     }
     videoDrawn = newVideoFrame = directVideo = texelVideo = false;
+    applyRefreshRate();
     u32 w = extent.width, h = extent.height;
     nwindowGetDimensions(nwindowGetDefault(), &w, &h);
     if (resizePending || w != extent.width || h != extent.height)
@@ -664,7 +690,8 @@ void SDLVideoContext::resetState() { }
 void SDLVideoContext::setSwapInterval(int interval)
 {
     VideoContext::swapInterval = interval;
-    nwindowSetFrameRates(nwindowGetDefault(), 120, 60, true);
+    if (context)
+        context->applyRefreshRate(true);
 }
 void SDLVideoContext::beginFrame()
 {
