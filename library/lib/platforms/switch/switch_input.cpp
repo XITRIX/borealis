@@ -172,11 +172,32 @@ SwitchInputManager::~SwitchInputManager()
 
 }
 
+static u32 vibrationStyle(u32 styleSet)
+{
+    static const u32 styles[] = {
+        HidNpadStyleTag_NpadFullKey,
+        HidNpadStyleTag_NpadHandheld,
+        HidNpadStyleTag_NpadJoyDual,
+        HidNpadStyleTag_NpadJoyRight,
+        HidNpadStyleTag_NpadJoyLeft,
+    };
+    for (u32 style : styles)
+        if (styleSet & style)
+            return style;
+    return 0;
+}
+
+// Vibration handles depend on the controller's style: a single Joy-Con has
+// one motor, a pair or a Pro Controller two.
 void SwitchInputManager::clearVibration(int controller)
 {
     Logger::debug("Vibration clear #{}", controller);
-    hidInitializeVibrationDevices(m_vibration_device_handles[controller], 2, (HidNpadIdType)controller, HidNpadStyleTag_NpadJoyDual);
-    sendRumbleInternal(m_vibration_device_handles[controller], m_vibration_values[controller], 160.0f, 320.0f, 0.0f, 0.0f);
+    const u32 style = vibrationStyle(padsState[controller].style_set);
+    const int count = style & (HidNpadStyleTag_NpadJoyLeft | HidNpadStyleTag_NpadJoyRight) ? 1 : 2;
+    m_vibration_device_counts[controller] = 0;
+    if (style && R_SUCCEEDED(hidInitializeVibrationDevices(m_vibration_device_handles[controller], count, (HidNpadIdType)controller, (HidNpadStyleTag)style)))
+        m_vibration_device_counts[controller] = count;
+    sendRumbleInternal(m_vibration_device_handles[controller], m_vibration_device_counts[controller], 0, 0);
 }
 
 void SwitchInputManager::updateUnifiedControllerState(ControllerState* state)
@@ -364,36 +385,20 @@ void SwitchInputManager::updateTouchStates(std::vector<RawTouchState>* states)
     }
 }
 
-void SwitchInputManager::sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2], unsigned short lowFreqMotor, unsigned short highFreqMotor)
+// The motor values are strengths. Each one drives its band, at the usual
+// 160 Hz and 320 Hz, on every motor of the controller.
+void SwitchInputManager::sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], int count, unsigned short lowFreqMotor, unsigned short highFreqMotor)
 {
-     vibration_values[0].amp_low = 
-    vibration_values[0].amp_high = lowFreqMotor == 0 ? 0.0f : 320.0f;
-    vibration_values[1].amp_low = 
-    vibration_values[1].amp_high = highFreqMotor == 0 ? 0.0f : 320.0f;
-
-    vibration_values[0].freq_low = 
-    vibration_values[0].freq_high = lowFreqMotor == 0 ? 160.0f : (float) lowFreqMotor / 204;
-
-    vibration_values[1].freq_low = highFreqMotor == 0 ? 160.0f : (float) highFreqMotor / 204;
-    vibration_values[1].freq_high = highFreqMotor == 0 ? 160.0f : (float) highFreqMotor / 204;
-
-    hidSendVibrationValues(vibration_device, vibration_values, 2);
-}
-
-void SwitchInputManager::sendRumbleInternal(HidVibrationDeviceHandle vibration_device[2], HidVibrationValue vibration_values[2], unsigned short lowFreqMotor, unsigned short highFreqMotor, unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor)
-{
-    vibration_values[0].amp_low = lowFreqMotor == 0 ? 0.0f : 320.0f;
-    vibration_values[0].amp_high = leftTriggerFreqMotor == 0 ? 0.0f : 320.0f;
-    vibration_values[1].amp_low = highFreqMotor == 0 ? 0.0f : 320.0f;
-    vibration_values[1].amp_high = rightTriggerFreqMotor == 0 ? 0.0f : 320.0f;
-
-    vibration_values[0].freq_low = lowFreqMotor == 0 ? 160.0f : (float) lowFreqMotor / 204;
-    vibration_values[1].freq_low = highFreqMotor == 0 ? 160.0f : (float) highFreqMotor / 204;
-
-    vibration_values[0].freq_high = leftTriggerFreqMotor == 0 ? 320.0f : (float) leftTriggerFreqMotor / 204;
-    vibration_values[1].freq_high = rightTriggerFreqMotor == 0 ? 320.0f : (float) rightTriggerFreqMotor / 204;
-
-    hidSendVibrationValues(vibration_device, vibration_values, 2);
+    if (count <= 0)
+        return;
+    const HidVibrationValue value = {
+        .amp_low   = lowFreqMotor / 65535.0f,
+        .freq_low  = 160.0f,
+        .amp_high  = highFreqMotor / 65535.0f,
+        .freq_high = 320.0f,
+    };
+    HidVibrationValue values[2] = { value, value };
+    hidSendVibrationValues(vibration_device, values, count);
 }
 
 void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor)
@@ -401,25 +406,19 @@ void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lo
     padUpdate(&this->padStateHandheld);
     if (controller == 0 && padStateHandheld.active_handheld)
     {
-        sendRumbleInternal(m_vibration_device_handheld, m_vibration_values_handheld, lowFreqMotor, highFreqMotor);
+        sendRumbleInternal(m_vibration_device_handheld, 2, lowFreqMotor, highFreqMotor);
         return;
     }
 
     int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    sendRumbleInternal(m_vibration_device_handles[localController], m_vibration_values[localController], lowFreqMotor, highFreqMotor);
+    sendRumbleInternal(m_vibration_device_handles[localController], m_vibration_device_counts[localController], lowFreqMotor, highFreqMotor);
 }
 
+// Switch controllers have no trigger motors, so each trigger joins the motor
+// on its side.
 void SwitchInputManager::sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor, unsigned short leftTriggerFreqMotor, unsigned short rightTriggerFreqMotor)
 {
-    padUpdate(&this->padStateHandheld);
-    if (controller == 0 && padStateHandheld.active_handheld)
-    {
-        sendRumbleInternal(m_vibration_device_handheld, m_vibration_values_handheld, lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
-        return;
-    }
-
-    int localController = padStateHandheld.active_handheld ? controller - 1 : controller;
-    sendRumbleInternal(m_vibration_device_handles[localController], m_vibration_values[localController], lowFreqMotor, highFreqMotor, leftTriggerFreqMotor, rightTriggerFreqMotor);
+    sendRumble(controller, std::max(lowFreqMotor, leftTriggerFreqMotor), std::max(highFreqMotor, rightTriggerFreqMotor));
 }
 
 void SwitchInputManager::updateMouseStates(RawMouseState* state)
