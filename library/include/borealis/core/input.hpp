@@ -287,9 +287,11 @@ struct RawMouseState
     Point position;
     Point offset;
     Point scroll;
-    bool leftButton   = false;
-    bool middleButton = false;
-    bool rightButton  = false;
+    bool leftButton    = false;
+    bool middleButton  = false;
+    bool rightButton   = false;
+    bool backButton    = false; // X1
+    bool forwardButton = false; // X2
 };
 
 struct MouseState
@@ -297,10 +299,12 @@ struct MouseState
     Point position;
     Point offset;
     Point scroll;
-    TouchPhase leftButton   = TouchPhase::NONE;
-    TouchPhase middleButton = TouchPhase::NONE;
-    TouchPhase rightButton  = TouchPhase::NONE;
-    View* view              = nullptr;
+    TouchPhase leftButton    = TouchPhase::NONE;
+    TouchPhase middleButton  = TouchPhase::NONE;
+    TouchPhase rightButton   = TouchPhase::NONE;
+    TouchPhase backButton    = TouchPhase::NONE;
+    TouchPhase forwardButton = TouchPhase::NONE;
+    View* view               = nullptr;
 };
 
 // Interface responsible for reporting input state to the application - button presses,

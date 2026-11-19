@@ -442,10 +442,12 @@ void SwitchInputManager::updateMouseStates(RawMouseState* state)
 #else
         state->scroll = Point(currentMouseState.wheel_delta_x, currentMouseState.wheel_delta_y);
 #endif
-        state->leftButton   = currentMouseState.buttons & HidMouseButton_Left;
-        state->middleButton = currentMouseState.buttons & HidMouseButton_Middle;
-        state->rightButton  = currentMouseState.buttons & HidMouseButton_Right;
-        lastCursorPosition  = state->position;
+        state->leftButton    = currentMouseState.buttons & HidMouseButton_Left;
+        state->middleButton  = currentMouseState.buttons & HidMouseButton_Middle;
+        state->rightButton   = currentMouseState.buttons & HidMouseButton_Right;
+        state->backButton    = currentMouseState.buttons & HidMouseButton_Back;
+        state->forwardButton = currentMouseState.buttons & HidMouseButton_Forward;
+        lastCursorPosition   = state->position;
     }
 }
 

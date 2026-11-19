@@ -63,15 +63,33 @@ class SwitchMouse
 
     SwitchMouseState update()
     {
-        HidMouseState usb       = { };
-        const bool connected    = hidGetMouseStates(&usb, 1) > 0 && (usb.attributes & HidMouseAttribute_IsConnected);
-        const bool fresh        = connected && (!this->usbConnected || usb.sampling_number != this->usbSamplingNumber);
+        HidMouseState samples[USB_SAMPLES];
+        const size_t count = hidGetMouseStates(samples, USB_SAMPLES);
+        HidMouseState usb  = { };
+        for (size_t i = 0; i < count; i++)
+            if (i == 0 || samples[i].sampling_number > usb.sampling_number)
+                usb = samples[i];
+        const bool connected = count > 0 && (usb.attributes & HidMouseAttribute_IsConnected);
+
+        // The mouse reports faster than the UI runs, so add up the motion of
+        // every sample since the last update, not only the newest one's.
+        if (connected && this->usbConnected)
+        {
+            usb.delta_x = usb.delta_y = usb.wheel_delta_x = usb.wheel_delta_y = 0;
+            for (size_t i = 0; i < count; i++)
+            {
+                if (samples[i].sampling_number <= this->usbSamplingNumber)
+                    continue;
+                usb.delta_x += samples[i].delta_x;
+                usb.delta_y += samples[i].delta_y;
+                usb.wheel_delta_x += samples[i].wheel_delta_x;
+                usb.wheel_delta_y += samples[i].wheel_delta_y;
+            }
+        }
         this->usbConnected      = connected;
         this->usbSamplingNumber = usb.sampling_number;
         if (!connected)
             usb = { };
-        else if (!fresh)
-            usb.delta_x = usb.delta_y = usb.wheel_delta_x = usb.wheel_delta_y = 0;
 
         const bool usbActivity = usb.delta_x || usb.delta_y || usb.wheel_delta_x || usb.wheel_delta_y || usb.buttons != this->usbButtons;
         this->usbButtons       = usb.buttons;
@@ -169,6 +187,7 @@ class SwitchMouse
 #endif
 
   private:
+    static constexpr size_t USB_SAMPLES = 16;
     bool usbConnected     = false;
     bool joyConCursor     = false;
     u64 usbSamplingNumber = 0;

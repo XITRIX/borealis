@@ -19,15 +19,22 @@ using Result=u32;
 #define R_SUCCEEDED(rc) ((rc)==0)
 constexpr u32 HidMouseAttribute_IsConnected=2;
 constexpr u32 HidMouseButton_Left=1,HidMouseButton_Right=2,HidMouseButton_Middle=4;
+constexpr u32 HidMouseButton_Forward=8,HidMouseButton_Back=16;
 struct HidMouseState {
     u64 sampling_number=0;
     s32 x=0,y=0,delta_x=0,delta_y=0,wheel_delta_x=0,wheel_delta_y=0;
     u32 buttons=0,attributes=0;
 };
 inline HidMouseState usb;
+inline HidMouseState older[3]; // Queued behind usb, newest first.
 inline size_t usbCount=1;
 inline void hidInitializeMouse(){}
-inline size_t hidGetMouseStates(HidMouseState* out,size_t){*out=usb;return usbCount;}
+inline size_t hidGetMouseStates(HidMouseState* out,size_t max){
+    assert(usbCount<=max&&usbCount<=4);
+    if(usbCount)*out=usb;
+    for(size_t i=1;i<usbCount;++i)out[i]=older[i-1];
+    return usbCount;
+}
 #ifdef __SWITCH2__
 enum PadPointerSide {PadPointerSide_None,PadPointerSide_Left,PadPointerSide_Right};
 enum HidNpadIdType {HidNpadIdType_No1=0,HidNpadIdType_No2=1,HidNpadIdType_No8=7,HidNpadIdType_Handheld=32};
@@ -163,6 +170,20 @@ int main(){
         usb={1,150,250,1,2,0,0,0,2}; // Reconnect may restart sample numbers.
         state=mouse.update();
         assert(state.x==150&&state.y==250&&state.delta_x==1);
+        usb={4,150,250,3,-1,0,1,16,2};
+        older[0]={3,150,250,2,0,0,1,16,2};
+        older[1]={2,150,250,1,0,1,0,0,2};
+        older[2]={1,150,250,1,2,0,0,0,2}; // Already read.
+        usbCount=4;
+        state=mouse.update(); // Every sample since the last update counts.
+        assert(state.delta_x==6&&state.delta_y==-1);
+        assert(state.wheel_delta_x==1&&state.wheel_delta_y==2&&state.buttons==16);
+        input.currentMouseState=state;
+        input.updateMouseStates(&raw);
+        assert(raw.backButton&&!raw.forwardButton&&!raw.leftButton);
+        state=mouse.update();
+        assert(state.delta_x==0&&state.wheel_delta_y==0&&state.buttons==16);
+        usbCount=1;
 #ifdef __SWITCH2__
         mouse.setCursorSpeed(2.0f);
         usb={};
@@ -230,6 +251,7 @@ struct Point {
 struct RawMouseState {
     Point position,offset,scroll;
     bool leftButton=false,middleButton=false,rightButton=false;
+    bool backButton=false,forwardButton=false;
 };
 struct Application {
     inline static float windowWidth=1280,windowHeight=720,windowScale=1;
